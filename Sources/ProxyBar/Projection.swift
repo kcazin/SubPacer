@@ -74,25 +74,8 @@ struct Projection: Sendable {
             return Projection(outcome: .limitReached, basis: nil, elapsedFraction: elapsedFraction)
         }
 
-        // Prefer recent readings: they reflect how you're working right now.
-        let isSession = length <= 6 * 3600
-        let lookback: TimeInterval = isSession ? 3600 : 86_400
-        let minimumSpan: TimeInterval = isSession ? 10 * 60 : 2 * 3600
-        let recent = samples.filter { $0.date >= max(start, now.addingTimeInterval(-lookback)) && $0.date <= now }
-
-        var rate: Double? // percent per second
-        var basis: Basis?
-        if let first = recent.first, let last = recent.last,
-           last.date.timeIntervalSince(first.date) >= minimumSpan,
-           let slope = slope(of: recent) {
-            rate = max(slope, 0)
-            basis = isSession ? .recent : .recentDay
-        } else if elapsed >= 10 * 60 {
-            rate = used / elapsed
-            basis = .windowAverage
-        }
-
-        guard let rate else { return nil }
+        guard let estimate = recentRate(for: window, samples: samples, now: now) else { return nil }
+        let (rate, basis) = estimate
         if used == 0 && rate == 0 {
             return Projection(outcome: .noUsage, basis: basis, elapsedFraction: elapsedFraction)
         }
@@ -105,6 +88,29 @@ struct Projection: Sendable {
         }
         let atReset = min(100, used + rate * remainingTime)
         return Projection(outcome: .lastsUntilReset(usedAtReset: atReset), basis: basis, elapsedFraction: elapsedFraction)
+    }
+
+    /// Current pace in percent per second: the trend of recent readings, or the average
+    /// since the window started when there aren't enough of them.
+    static func recentRate(for window: QuotaWindow, samples: [UsageSample], now: Date = Date()) -> (rate: Double, basis: Basis)? {
+        guard let reset = window.resetsAt, let length = window.windowLength, reset > now else { return nil }
+        let start = reset.addingTimeInterval(-length)
+        let elapsed = min(max(now.timeIntervalSince(start), 0), length)
+
+        // Prefer recent readings: they reflect how you're working right now.
+        let isSession = length <= 6 * 3600
+        let lookback: TimeInterval = isSession ? 3600 : 86_400
+        let minimumSpan: TimeInterval = isSession ? 10 * 60 : 2 * 3600
+        let recent = samples.filter { $0.date >= max(start, now.addingTimeInterval(-lookback)) && $0.date <= now }
+
+        if let first = recent.first, let last = recent.last,
+           last.date.timeIntervalSince(first.date) >= minimumSpan,
+           let slope = slope(of: recent) {
+            return (max(slope, 0), isSession ? .recent : .recentDay)
+        } else if elapsed >= 10 * 60 {
+            return (window.usedPercent / elapsed, .windowAverage)
+        }
+        return nil
     }
 
     /// Least-squares slope of usage over time, in percent per second.

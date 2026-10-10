@@ -28,6 +28,10 @@ struct ProxyBarApp: App {
 
 struct MenuBarLabel: View {
     let store: UsageStore
+    @AppStorage("menuBarStyle") private var style = MenuBarStyle.forecast
+    @AppStorage("menuBarColor") private var colored = true
+    /// The menu bar's own appearance, which follows the wallpaper rather than the system theme.
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         // `clock` ticks every minute so reset countdowns stay current between refreshes.
@@ -39,35 +43,24 @@ struct MenuBarLabel: View {
         }
     }
 
-    /// Remaining quota, or the wait until a used-up account is usable again.
-    private func menuValue(for account: AccountUsage, now: Date) -> String {
-        if let until = account.blockedUntil {
-            return until > now ? ResetFormatter.duration(until.timeIntervalSince(now)).replacingOccurrences(of: " ", with: "") : "…"
-        }
-        return account.remainingPercent.map { "\(Int($0.rounded(.down)))%" } ?? "–"
-    }
-
-    /// MenuBarExtra labels drop inline SF Symbols from Text, so render the whole label as a template image.
+    /// MenuBarExtra labels drop inline SF Symbols from Text, so render the whole label as an image:
+    /// a template image in monochrome, or drawn for the current menu bar appearance in color.
     @MainActor
     private func rendered(now: Date) -> NSImage? {
         guard !store.accounts.isEmpty else { return nil }
+        let foreground: Color = colored && colorScheme == .dark ? .white : .black
         let content = HStack(spacing: 8) {
-            ForEach(store.accounts) { account in
-                HStack(spacing: 3) {
-                    Image(systemName: account.isBlocked ? "hourglass" : account.provider?.symbol ?? "circle")
-                        .font(.system(size: 11, weight: .bold))
-                    Text(menuValue(for: account, now: now))
-                        .font(.system(size: 13, weight: .medium).monospacedDigit())
-                }
+            ForEach(store.menuBarItems(now: now)) { item in
+                MenuBarItemView(item: item, style: style, colored: colored, foreground: foreground)
             }
         }
-        .foregroundStyle(.black)
+        .environment(\.colorScheme, colorScheme)
         let scale = NSScreen.main?.backingScaleFactor ?? 2
         let renderer = ImageRenderer(content: content)
         renderer.scale = scale
         guard let cgImage = renderer.cgImage else { return nil }
         let image = NSImage(cgImage: cgImage, size: NSSize(width: CGFloat(cgImage.width) / scale, height: CGFloat(cgImage.height) / scale))
-        image.isTemplate = true
+        image.isTemplate = !colored
         return image
     }
 }

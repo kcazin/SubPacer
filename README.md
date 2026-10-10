@@ -4,6 +4,7 @@ Menu bar quota monitor for the accounts in a local CLIProxyAPI.
 
 - Lists accounts from the proxy's management API (`/v0/management/auth-files`).
 - Fetches Claude and Codex quota through `/v0/management/api-call`, so the proxy injects and refreshes the credentials; ProxyBar never reads tokens.
+- **Runway**: pools each provider's accounts (the proxy fails over between them) and simulates forward to the last weekly reset, following your activity pattern and letting limits refill as they reset. Shows whether you ever run out, when, and how much faster or slower you could go. The menu bar shows ✓ or the projected run-out time per provider.
 - Shows request counts per account from the proxy (last ~3h) as secondary info.
 - Refreshes every 5 minutes and when the panel opens; honors `Retry-After` from provider usage APIs.
 

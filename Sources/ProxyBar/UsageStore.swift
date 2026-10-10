@@ -49,6 +49,8 @@ final class UsageStore {
     static let shared = UsageStore()
 
     private(set) var accounts: [AccountUsage] = []
+    /// One per provider, pooling its accounts. Same order as `accounts`.
+    private(set) var runways: [Runway] = []
     private(set) var proxyError: String?
     private(set) var lastUpdated: Date?
     private(set) var isRefreshing = false
@@ -160,6 +162,15 @@ final class UsageStore {
         let providerOrder = QuotaProviders.all.map { $0.id }
         accounts = merged.sorted {
             (providerOrder.firstIndex(of: $0.providerID) ?? .max, $0.email) < (providerOrder.firstIndex(of: $1.providerID) ?? .max, $1.email)
+        }
+        runways = providerOrder.compactMap { providerID in
+            RunwayForecast.make(
+                providerID: providerID,
+                accounts: accounts.filter { $0.providerID == providerID },
+                samples: { history.samples(for: UsageHistory.key(account: $0, window: $1)) },
+                profile: profile,
+                now: recordedAt
+            )
         }
         lastUpdated = Date()
     }

@@ -16,7 +16,7 @@ enum DebugSnapshot {
             default: nil
             }
 
-            let hosting = NSHostingView(rootView: UsagePanel(store: store))
+            let hosting = NSHostingView(rootView: UsagePanel(store: store, showSettings: ProcessInfo.processInfo.environment["PROXYBAR_SETTINGS"] != nil))
             hosting.frame.size = hosting.fittingSize
             let background = NSVisualEffectView(frame: hosting.frame)
             background.material = .popover
@@ -43,6 +43,10 @@ enum DebugSnapshot {
             for account in store.accounts {
                 let windows = account.snapshot.windows.map { "\($0.label)=\(Int($0.usedPercent))%" }.joined(separator: ", ")
                 print("\(account.providerID) \(account.email) error=\(account.error ?? "-") [\(windows)]")
+            }
+            for runway in store.runways {
+                let outages = runway.outages.map { "\($0.window) \($0.interval.start.formatted())–\($0.interval.end.formatted())" }
+                print("runway \(runway.providerID) accounts=\(runway.accountCount) horizon=\(runway.horizon.formatted()) headroom=\(runway.headroom.map { String(format: "%.2f", $0) } ?? "-") outages=\(outages)")
             }
             print("proxyError=\(store.proxyError ?? "-")")
             NSApplication.shared.terminate(nil)

@@ -52,6 +52,7 @@ enum Severity {
 
 struct UsagePanel: View {
     let store: UsageStore
+    @State var showSettings = false
 
     var body: some View {
         VStack(spacing: 10) {
@@ -59,24 +60,10 @@ struct UsagePanel: View {
 
             GlassEffectContainer(spacing: 8) {
                 VStack(spacing: 8) {
-                    if let error = store.proxyError {
-                        Banner(text: error, symbol: "exclamationmark.triangle.fill", tint: Palette.warning)
-                            .padding(10)
-                            .glassEffect(.regular, in: .rect(cornerRadius: 14))
-                    }
-                    ForEach(store.accounts) { account in
-                        AccountCard(account: account)
-                    }
-                    if store.accounts.isEmpty && store.proxyError == nil {
-                        ProgressView()
-                            .controlSize(.small)
-                            .frame(maxWidth: .infinity, minHeight: 80)
-                    }
-                    if store.accounts.contains(where: { $0.offHours != nil }) {
-                        OffHoursCard(store: store)
-                    }
-                    if !store.accounts.isEmpty {
-                        ProxySection(store: store)
+                    if showSettings {
+                        SettingsCard(store: store)
+                    } else {
+                        content
                     }
                 }
             }
@@ -86,6 +73,32 @@ struct UsagePanel: View {
         .padding(12)
         .frame(width: 340)
         .task { await store.refreshIfStale() }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let error = store.proxyError {
+            Banner(text: error, symbol: "exclamationmark.triangle.fill", tint: Palette.warning)
+                .padding(10)
+                .glassEffect(.regular, in: .rect(cornerRadius: 14))
+        }
+        if !store.runways.isEmpty {
+            RunwayCard(runways: store.runways)
+        }
+        ForEach(store.accounts) { account in
+            AccountCard(account: account)
+        }
+        if store.accounts.isEmpty && store.proxyError == nil {
+            ProgressView()
+                .controlSize(.small)
+                .frame(maxWidth: .infinity, minHeight: 80)
+        }
+        if store.accounts.contains(where: { $0.offHours != nil }) {
+            OffHoursCard(store: store)
+        }
+        if !store.accounts.isEmpty {
+            ProxySection(store: store)
+        }
     }
 
     private var header: some View {
@@ -100,6 +113,18 @@ struct UsagePanel: View {
                 }
             }
             Spacer()
+            Button {
+                withAnimation(.snappy(duration: 0.25)) { showSettings.toggle() }
+            } label: {
+                Image(systemName: showSettings ? "xmark" : "gearshape")
+                    .font(.system(size: 10, weight: .semibold))
+                    .frame(width: 14, height: 14)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .controlSize(.small)
+            .keyboardShortcut(",")
+            .help(showSettings ? "Close settings" : "Settings (⌘,)")
             Button {
                 Task { await store.refresh() }
             } label: {
@@ -431,6 +456,242 @@ struct Banner: View {
     }
 }
 
+// MARK: - Runway
+
+/// The meta view: pooling each provider's accounts, do you make it to every reset without running out?
+struct RunwayCard: View {
+    let runways: [Runway]
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: "road.lanes")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text("Runway")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("until every limit resets")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                ForEach(runways) { runway in
+                    RunwayRow(runway: runway, now: context.date)
+                }
+            }
+        }
+        .padding(12)
+        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+    }
+}
+
+struct RunwayRow: View {
+    let runway: Runway
+    let now: Date
+
+    private var tint: Color { runway.provider?.tint ?? .gray }
+
+    private var severity: Severity {
+        guard let runsOut = runway.runsOutAt else { return .ok }
+        return runsOut.timeIntervalSince(now) < 86_400 ? .critical : .warning
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Circle().fill(tint).frame(width: 6, height: 6)
+                Text(runway.provider?.displayName ?? runway.providerID.capitalized)
+                    .font(.system(size: 11, weight: .medium))
+                if runway.accountCount > 1 {
+                    Text("\(runway.accountCount) accounts pooled")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer(minLength: 4)
+                headline
+            }
+            RunwayBar(runway: runway, now: now, color: severity.color)
+                .frame(height: 10)
+            Text(detail)
+                .font(.system(size: 10.5))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .help("Projected from \(runway.basis.rawValue), split across accounts that still have quota.")
+        }
+    }
+
+    @ViewBuilder
+    private var headline: some View {
+        if let runsOut = runway.runsOutAt {
+            HStack(spacing: 4) {
+                Image(systemName: "hourglass")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(severity.color)
+                Text(runsOut <= now ? "Out now" : "Out \(ResetFormatter.clock(runsOut))")
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+            }
+        } else {
+            Label("Never runs out", systemImage: "checkmark.circle.fill")
+                .labelStyle(CompactLabelStyle())
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Palette.ok)
+        }
+    }
+
+    private var detail: String {
+        var parts: [String] = []
+        if let outage = runway.outages.first {
+            parts.append("\(outage.window) runs out · back \(ResetFormatter.clock(outage.interval.end))")
+        } else {
+            parts.append("Lasts to \(ResetFormatter.clock(runway.horizon))")
+        }
+        if let headroom = runway.headroom {
+            let multiple = headroom.formatted(.number.precision(.fractionLength(1)))
+            if headroom >= 8 {
+                parts.append("pace could go 8×+")
+            } else if headroom >= 1 && headroom < 1.1 {
+                parts.append("just enough at your pace")
+            } else if headroom >= 1 {
+                parts.append("room for \(multiple)× your pace")
+            } else {
+                parts.append("slow to \(multiple)× to last")
+            }
+        }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// A timeline from now to the last weekly reset: filled while quota is projected to be
+/// available, gaps where every account is used up, ticks where an account's week resets.
+struct RunwayBar: View {
+    let runway: Runway
+    let now: Date
+    let color: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let height: CGFloat = 6
+            let span = runway.horizon.timeIntervalSince(runway.start)
+            let x = { (date: Date) -> CGFloat in
+                span > 0 ? width * CGFloat(min(max(date.timeIntervalSince(runway.start) / span, 0), 1)) : 0
+            }
+            ZStack(alignment: .leading) {
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Palette.track)
+                    ForEach(Array(runway.availableIntervals.enumerated()), id: \.offset) { _, segment in
+                        let start = x(segment.start), end = x(segment.end)
+                        Rectangle()
+                            .fill(color.gradient)
+                            .frame(width: max(end - start, 1))
+                            .offset(x: start)
+                    }
+                    ForEach(midnights, id: \.self) { midnight in
+                        Rectangle()
+                            .fill(Color.primary.opacity(0.18))
+                            .frame(width: 1)
+                            .offset(x: x(midnight))
+                    }
+                }
+                .frame(height: height)
+                .clipShape(Capsule())
+                ForEach(runway.resets, id: \.self) { reset in
+                    Capsule()
+                        .fill(Color.primary.opacity(0.45))
+                        .frame(width: 2, height: height + 4)
+                        .offset(x: x(reset) - 1)
+                        .help("An account's weekly limit resets \(ResetFormatter.clock(reset))")
+                }
+            }
+            .frame(height: proxy.size.height)
+        }
+        .help(runway.outages.isEmpty
+              ? "Now → \(ResetFormatter.clock(runway.horizon)) (last weekly reset)"
+              : "Gaps are when every account is projected to be used up: " + runway.outages.map {
+                  "\(ResetFormatter.clock($0.interval.start))–\(ResetFormatter.clock($0.interval.end))"
+              }.joined(separator: ", "))
+    }
+
+    private var midnights: [Date] {
+        let calendar = Calendar.current
+        var dates: [Date] = []
+        var day = calendar.startOfDay(for: runway.start)
+        while let next = calendar.date(byAdding: .day, value: 1, to: day), next < runway.horizon {
+            dates.append(next)
+            day = next
+        }
+        return dates
+    }
+}
+
+// MARK: - Settings
+
+struct SettingsCard: View {
+    let store: UsageStore
+    @AppStorage("menuBarStyle") private var style = MenuBarStyle.forecast
+    @AppStorage("menuBarColor") private var colored = true
+
+    private let columns = [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Menu bar")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Toggle("Color", isOn: $colored)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .font(.system(size: 11))
+            }
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                let items = store.menuBarItems(now: context.date)
+                LazyVGrid(columns: columns, spacing: 6) {
+                    ForEach(MenuBarStyle.allCases) { option in
+                        StyleTile(style: option, items: items, colored: colored, selected: option == style)
+                            .onTapGesture { style = option }
+                    }
+                }
+            }
+            Text(style.summary)
+                .font(.system(size: 10.5))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+    }
+}
+
+/// A live preview of one menu bar style, with your current numbers.
+struct StyleTile: View {
+    let style: MenuBarStyle
+    let items: [MenuBarItem]
+    let colored: Bool
+    let selected: Bool
+
+    var body: some View {
+        VStack(spacing: 5) {
+            HStack(spacing: 8) {
+                ForEach(items) { item in
+                    MenuBarItemView(item: item, style: style, colored: colored, foreground: .primary)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 26)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
+            Text(style.title)
+                .font(.system(size: 10.5, weight: selected ? .semibold : .regular))
+                .foregroundStyle(selected ? .primary : .secondary)
+        }
+        .padding(5)
+        .background(RoundedRectangle(cornerRadius: 9).fill(selected ? Color.accentColor.opacity(0.14) : .clear))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(selected ? Color.accentColor.opacity(0.6) : .clear, lineWidth: 1))
+        .contentShape(Rectangle())
+        .help(style.summary)
+    }
+}
+
 // MARK: - Off-hours
 
 /// How much weekly quota will expire unused, and what that means for each quiet night left.
@@ -745,6 +1006,13 @@ enum ResetFormatter {
         let interval = date.timeIntervalSince(now)
         if interval < 86_400 { return duration(interval) }
         return date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+    }
+
+    /// Compact time for the menu bar: "14:00" today, otherwise "Thu".
+    static func short(_ date: Date, now: Date = Date()) -> String {
+        Calendar.current.isDate(date, inSameDayAs: now)
+            ? date.formatted(date: .omitted, time: .shortened)
+            : date.formatted(.dateTime.weekday(.abbreviated))
     }
 
     /// Time of day, with the weekday when it isn't today.
