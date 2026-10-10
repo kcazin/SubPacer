@@ -41,6 +41,13 @@ struct AccountUsage: Identifiable, Sendable {
     }
 
     var isBlocked: Bool { !exhaustedWindows.isEmpty }
+
+    /// The longest primary window (e.g. weekly): the one whose quota can expire unused.
+    var weeklyWindow: QuotaWindow? {
+        snapshot.windows
+            .filter { $0.isPrimary && ($0.windowLength ?? 0) >= 86_400 }
+            .max { ($0.windowLength ?? 0) < ($1.windowLength ?? 0) }
+    }
 }
 
 @MainActor
@@ -155,23 +162,36 @@ final class UsageStore {
                     ? ActivityForecast.projection(for: window, profile: profile, now: recordedAt)
                     : Projection.make(for: window, samples: history.samples(for: key), now: recordedAt)
             }
-            merged[index].offHours = OffHoursInsight.make(for: merged[index], profile: profile, now: recordedAt)
         }
         history.save()
 
         let providerOrder = QuotaProviders.all.map { $0.id }
-        accounts = merged.sorted {
+        merged.sort {
             (providerOrder.firstIndex(of: $0.providerID) ?? .max, $0.email) < (providerOrder.firstIndex(of: $1.providerID) ?? .max, $1.email)
         }
         runways = providerOrder.compactMap { providerID in
             RunwayForecast.make(
                 providerID: providerID,
-                accounts: accounts.filter { $0.providerID == providerID },
+                accounts: merged.filter { $0.providerID == providerID },
                 samples: { history.samples(for: UsageHistory.key(account: $0, window: $1)) },
                 profile: profile,
                 now: recordedAt
             )
         }
+        // Weekly projections come from the runway, which knows the accounts share your load.
+        let weeklyOutcomes = runways.reduce(into: [String: (Projection.Outcome, Projection.Basis)]()) { result, runway in
+            for (id, outcome) in runway.weeklyOutcomes { result[id] = (outcome, runway.basis) }
+        }
+        for index in merged.indices {
+            if let weekly = merged[index].weeklyWindow, let (outcome, basis) = weeklyOutcomes[merged[index].id] {
+                let reached = if case .limitReached = outcome { true } else { false }
+                merged[index].projections[weekly.id] = Projection(
+                    outcome: outcome, basis: reached ? nil : basis, elapsedFraction: weekly.elapsedFraction(now: recordedAt)
+                )
+            }
+            merged[index].offHours = OffHoursInsight.make(for: merged[index], profile: profile, now: recordedAt)
+        }
+        accounts = merged
         lastUpdated = Date()
     }
 

@@ -183,6 +183,7 @@ enum ActivityForecast {
         }
         return Projection(outcome: .lastsUntilReset(usedAtReset: cumulative), basis: basis, elapsedFraction: elapsedFraction)
     }
+
 }
 
 /// What your quiet hours mean for one account's weekly quota.
@@ -200,11 +201,7 @@ enum OffHoursInsight: Sendable {
     }
 
     static func make(for account: AccountUsage, profile: ActivityProfile, now: Date = Date()) -> OffHoursInsight? {
-        // The longest primary window is the one that expires unused.
-        guard let weekly = account.snapshot.windows
-            .filter({ $0.isPrimary && ($0.windowLength ?? 0) >= 86_400 })
-            .max(by: { ($0.windowLength ?? 0) < ($1.windowLength ?? 0) }),
-            let reset = weekly.resetsAt, reset > now else { return nil }
+        guard let weekly = account.weeklyWindow, let reset = weekly.resetsAt, reset > now else { return nil }
 
         if account.isBlocked {
             guard let until = account.blockedUntil else { return nil }

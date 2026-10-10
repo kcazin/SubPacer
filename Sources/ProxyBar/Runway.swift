@@ -27,6 +27,8 @@ struct Runway: Identifiable, Sendable {
     /// (below 1: how far you'd need to slow down). Nil when nothing can be gained by pacing.
     let headroom: Double?
     let basis: Projection.Basis
+    /// Per account ID: how its current weekly window ends at your usual pace, with the load shared across the pool.
+    let weeklyOutcomes: [String: Projection.Outcome]
 
     var provider: (any QuotaProvider.Type)? { QuotaProviders.provider(for: providerID) }
     var runsOutAt: Date? { outages.first?.interval.start }
@@ -47,6 +49,9 @@ enum RunwayForecast {
         var reset: Date?
         /// Percent of this limit used per activity-weighted hour.
         let rate: Double
+        /// The reset ending the current window, and how that window turns out.
+        let firstReset: Date?
+        var outcome: Projection.Outcome?
     }
 
     /// Simulates the pool forward in 10-minute steps: demand follows your activity pattern
@@ -83,7 +88,8 @@ enum RunwayForecast {
                         ?? elapsed.flatMap { $0 >= 0.25 ? window.usedPercent / $0 : nil }
                 lanes.append(Lane(
                     account: index, kind: window.id, label: window.label, length: length, isLong: isLong,
-                    used: reset == nil ? 0 : window.usedPercent, reset: reset, rate: rate ?? 0
+                    used: reset == nil ? 0 : window.usedPercent, reset: reset, rate: rate ?? 0,
+                    firstReset: reset, outcome: reset != nil && window.usedPercent >= 100 ? .limitReached : nil
                 ))
                 // How hard you're working right now, carried until the running session resets.
                 if !isLong, let reset, let rate, rate > 0,
@@ -111,7 +117,7 @@ enum RunwayForecast {
             return perAccount.isEmpty ? 0 : perAccount.reduce(0, +) / Double(perAccount.count)
         }
 
-        func simulate(pace multiplier: Double, stopAtFirstOutage: Bool) -> (outages: [Runway.Outage], forecast: [Double]) {
+        func simulate(pace multiplier: Double, stopAtFirstOutage: Bool) -> (outages: [Runway.Outage], forecast: [Double], lanes: [Lane]) {
             var lanes = lanes
             var outages: [Runway.Outage] = []
             var forecast: [Double] = []
@@ -122,6 +128,9 @@ enum RunwayForecast {
                 let hours = next.timeIntervalSince(cursor) / 3600
                 for index in lanes.indices {
                     if let reset = lanes[index].reset, reset <= cursor {
+                        if reset == lanes[index].firstReset, lanes[index].outcome == nil {
+                            lanes[index].outcome = .lastsUntilReset(usedAtReset: min(lanes[index].used, 100))
+                        }
                         lanes[index].used = 0
                         lanes[index].reset = nil
                     }
@@ -135,7 +144,7 @@ enum RunwayForecast {
                         outages[outages.count - 1] = .init(interval: DateInterval(start: last.interval.start, end: next), window: last.window)
                     } else {
                         outages.append(.init(interval: DateInterval(start: cursor, end: next), window: lastExhausted))
-                        if stopAtFirstOutage { return (outages, forecast) }
+                        if stopAtFirstOutage { return (outages, forecast, lanes) }
                     }
                 } else {
                     // Demand for each limit is what every account would use, split over the available ones.
@@ -149,17 +158,27 @@ enum RunwayForecast {
                             let wasAvailable = lanes[index].used < 100
                             lanes[index].used += total / Double(targets.count)
                             if lanes[index].reset == nil { lanes[index].reset = cursor.addingTimeInterval(lanes[index].length) }
-                            if wasAvailable && lanes[index].used >= 100 { lastExhausted = lanes[index].label }
+                            if wasAvailable && lanes[index].used >= 100 {
+                                lastExhausted = lanes[index].label
+                                if lanes[index].outcome == nil, let first = lanes[index].firstReset, cursor < first {
+                                    lanes[index].outcome = .runsOut(at: next)
+                                }
+                            }
                         }
                     }
                 }
                 cursor = next
             }
             if !stopAtFirstOutage { forecast.append(poolRemaining(lanes)) }
-            return (outages, forecast)
+            return (outages, forecast, lanes)
         }
 
-        let (outages, forecast) = simulate(pace: 1, stopAtFirstOutage: false)
+        let (outages, forecast, finalLanes) = simulate(pace: 1, stopAtFirstOutage: false)
+        var weeklyOutcomes: [String: Projection.Outcome] = [:]
+        for lane in finalLanes where lane.firstReset != nil && lane.kind == pool[lane.account].weeklyWindow?.id {
+            let used = min(lane.used, 100)
+            weeklyOutcomes[pool[lane.account].id] = lane.outcome ?? (used > 0 ? .lastsUntilReset(usedAtReset: used) : .noUsage)
+        }
 
         // Bisect for the fastest pace that never runs out. Pointless if even zero usage
         // runs out (every account is already used up) or there's no usage to scale.
@@ -187,7 +206,8 @@ enum RunwayForecast {
             outages: outages,
             forecast: forecast,
             headroom: headroom,
-            basis: profile.learnedHours >= 12 ? .activityProfile : .defaultHours
+            basis: profile.learnedHours >= 12 ? .activityProfile : .defaultHours,
+            weeklyOutcomes: weeklyOutcomes
         )
     }
 
