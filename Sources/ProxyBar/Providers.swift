@@ -73,7 +73,8 @@ enum ClaudeQuota: QuotaProvider {
     static func parse(_ data: Data) throws -> QuotaSnapshot {
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw ParseError() }
         var windows: [QuotaWindow] = []
-        for (key, value) in object {
+        // Codenamed fields (e.g. `iguana_necktie`) are undocumented; only show limits we can name.
+        for (key, value) in object where labels[key] != nil || key.hasPrefix("seven_day_") {
             guard let dict = value as? [String: Any],
                   let utilization = (dict["utilization"] as? NSNumber)?.doubleValue else { continue }
             if let enabled = dict["is_enabled"] as? Bool, !enabled { continue }
