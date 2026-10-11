@@ -56,6 +56,7 @@ struct Projection: Sendable {
         case windowAverage = "your average pace since the window started"
         case activityProfile = "your pace during the hours you're usually active"
         case defaultHours = "your pace during 8:00–23:00 (still learning your actual hours)"
+        case pooledUsage = "what your accounts used together over recent days, spread over the hours you're usually active"
     }
 
     let outcome: Outcome

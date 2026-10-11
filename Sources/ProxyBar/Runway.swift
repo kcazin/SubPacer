@@ -70,8 +70,11 @@ enum RunwayForecast {
         guard !pool.isEmpty else { return nil }
 
         var lanes: [Lane] = []
-        /// Per account: activity intensity relative to the profile, and until when, while a session is running.
-        var currentPace: [Int: (intensity: Double, until: Date)] = [:]
+        /// Weekly usage per limit and account: recorded readings plus the window's start and current value.
+        var longUsage: [String: [[UsageSample]]] = [:]
+        /// Session use across the pool: lately (percent per hour) and usually (percent per weighted hour).
+        var recentPace = 0.0, usualPace = 0.0
+        var paceUntil: Date?
 
         for (index, account) in pool.enumerated() {
             for window in account.snapshot.windows where window.isPrimary {
@@ -91,10 +94,18 @@ enum RunwayForecast {
                     used: reset == nil ? 0 : window.usedPercent, reset: reset, rate: rate ?? 0,
                     firstReset: reset, outcome: reset != nil && window.usedPercent >= 100 ? .limitReached : nil
                 ))
+                if isLong {
+                    var timeline = history.filter { $0.date < now }
+                    if let reset { timeline.append(UsageSample(date: reset.addingTimeInterval(-length), used: 0)) }
+                    timeline.append(UsageSample(date: now, used: window.usedPercent))
+                    longUsage[window.id, default: []].append(timeline.sorted { $0.date < $1.date })
+                }
                 // How hard you're working right now, carried until the running session resets.
                 if !isLong, let reset, let rate, rate > 0,
                    let recent = Projection.recentRate(for: window, samples: history, now: now) {
-                    currentPace[index] = (recent.rate * 3600 / rate, reset)
+                    recentPace += recent.rate * 3600
+                    usualPace += rate
+                    paceUntil = min(paceUntil ?? reset, reset)
                 }
             }
         }
@@ -103,8 +114,19 @@ enum RunwayForecast {
         guard let horizon = (longResets.max() ?? lanes.compactMap(\.reset).max())
             .map({ min($0, now.addingTimeInterval(8 * 86_400)) }) else { return nil }
 
-        func intensity(account: Int, at date: Date) -> Double {
-            if let pace = currentPace[account], date < pace.until { return pace.intensity }
+        // Pool-wide demand per limit, in percent of one account's limit per weighted hour.
+        var demandRate: [String: Double] = [:]
+        for lane in lanes { demandRate[lane.kind, default: 0] += lane.rate }
+        var pooled = false
+        for (kind, usage) in longUsage {
+            if let rate = pooledRate(usage, profile: profile, now: now) {
+                demandRate[kind] = rate
+                pooled = true
+            }
+        }
+
+        func intensity(at date: Date) -> Double {
+            if let paceUntil, date < paceUntil { return recentPace / usualPace }
             return profile.weight(at: date)
         }
 
@@ -147,12 +169,9 @@ enum RunwayForecast {
                         if stopAtFirstOutage { return (outages, forecast, lanes) }
                     }
                 } else {
-                    // Demand for each limit is what every account would use, split over the available ones.
-                    var demand: [String: Double] = [:]
-                    for lane in lanes {
-                        demand[lane.kind, default: 0] += lane.rate * intensity(account: lane.account, at: cursor) * hours * multiplier
-                    }
-                    for (kind, total) in demand where total > 0 {
+                    // Demand for each limit is split over the accounts that still have quota.
+                    for (kind, rate) in demandRate where rate > 0 {
+                        let total = rate * intensity(at: cursor) * hours * multiplier
                         let targets = lanes.indices.filter { lanes[$0].kind == kind && available.contains(lanes[$0].account) }
                         for index in targets {
                             let wasAvailable = lanes[index].used < 100
@@ -183,7 +202,7 @@ enum RunwayForecast {
         // Bisect for the fastest pace that never runs out. Pointless if even zero usage
         // runs out (every account is already used up) or there's no usage to scale.
         var headroom: Double?
-        let hasDemand = lanes.contains { $0.rate > 0 }
+        let hasDemand = demandRate.values.contains { $0 > 0 }
         if hasDemand && simulate(pace: 0, stopAtFirstOutage: true).outages.isEmpty {
             if simulate(pace: maxHeadroom, stopAtFirstOutage: true).outages.isEmpty {
                 headroom = maxHeadroom
@@ -206,9 +225,27 @@ enum RunwayForecast {
             outages: outages,
             forecast: forecast,
             headroom: headroom,
-            basis: profile.learnedHours >= 12 ? .activityProfile : .defaultHours,
+            basis: pooled ? .pooledUsage : profile.learnedHours >= 12 ? .activityProfile : .defaultHours,
             weeklyOutcomes: weeklyOutcomes
         )
+    }
+
+    /// The whole pool's use of one limit, in percent of an account's limit per weighted hour, averaged over
+    /// the longest stretch (up to a week, at least a day) where every account's usage is known. Each timeline
+    /// holds an account's readings, its window start (at 0) and its current value. Averaging over real time
+    /// keeps hours the profile misjudges from skewing the rate; the profile only spreads it across the day.
+    private static func pooledRate(_ usage: [[UsageSample]], profile: ActivityProfile, now: Date) -> Double? {
+        let timelines = usage.filter { $0.count > 1 }
+        guard let latestStart = timelines.map({ $0[0].date }).max() else { return nil }
+        let start = max(latestStart, now.addingTimeInterval(-7 * 86_400))
+        let days = now.timeIntervalSince(start) / 86_400
+        let weightedHoursPerDay = profile.weights.reduce(0, +)
+        guard days >= 1, weightedHoursPerDay > 0 else { return nil }
+        let used = timelines.reduce(0.0) { total, timeline in
+            let span = timeline[(timeline.lastIndex { $0.date <= start } ?? 0)...]
+            return total + zip(span, span.dropFirst()).reduce(0) { $0 + max($1.1.used - $1.0.used, 0) }
+        }
+        return used / days / weightedHoursPerDay
     }
 
     /// Percent per activity-weighted hour over the last day of readings, across any resets.
