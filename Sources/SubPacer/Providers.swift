@@ -137,7 +137,7 @@ enum ClaudeCodeVersion {
     static let installed: String = {
         let fallback = "2.1.296"
         let directory = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".local/share/claude/versions")
-        let versions = (try? FileManager.default.contentsOfDirectory(atPath: directory.path())) ?? []
+        let versions = (try? FileManager.default.contentsOfDirectory(atPath: directory.path(percentEncoded: false))) ?? []
         return versions
             .filter { $0.range(of: #"^\d+\.\d+\.\d+$"#, options: .regularExpression) != nil }
             .max { $0.compare($1, options: .numeric) == .orderedAscending }

@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "ProxyBar",
+    name: "SubPacer",
     platforms: [.macOS(.v26)],
     targets: [
         .executableTarget(
-            name: "ProxyBar",
-            path: "Sources/ProxyBar",
+            name: "SubPacer",
+            path: "Sources/SubPacer",
             swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]

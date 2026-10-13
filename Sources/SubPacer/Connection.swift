@@ -5,7 +5,7 @@ enum Connection {
     static let defaultURL = URL(string: "http://127.0.0.1:8317")!
 
     static var configuredURL: String? {
-        ProcessInfo.processInfo.environment["PROXYBAR_URL"] ?? UserDefaults.standard.string(forKey: "proxyURL")
+        ProcessInfo.processInfo.environment["SUBPACER_URL"] ?? UserDefaults.standard.string(forKey: "proxyURL")
     }
 
     /// Throws when the configured URL is unusable, rather than quietly talking to a different proxy.
@@ -49,13 +49,13 @@ enum Connection {
 
     // MARK: Management key
 
-    private static let service = "ProxyBar"
+    private static let service = "SubPacer"
     private static let account = "management-key"
 
     /// The key goes through `security` rather than SecItem, so rebuilding the ad-hoc signed app
     /// doesn't make the Keychain prompt for access again.
     static func loadKey() -> String? {
-        if let env = ProcessInfo.processInfo.environment["PROXYBAR_MANAGEMENT_KEY"], !env.isEmpty {
+        if let env = ProcessInfo.processInfo.environment["SUBPACER_MANAGEMENT_KEY"], !env.isEmpty {
             return env
         }
         return keychainKey()
@@ -67,6 +67,15 @@ enum Connection {
         return key.isEmpty ? nil : key
     }
 
+    /// Copies a key saved under an earlier service name, then removes the old item.
+    static func migrateKey(fromService oldService: String) {
+        guard keychainKey() == nil,
+              let output = runSecurity(["find-generic-password", "-s", oldService, "-a", account, "-w"]) else { return }
+        let key = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty, saveKey(key) else { return }
+        runSecurity(["delete-generic-password", "-s", oldService, "-a", account])
+    }
+
     /// Fed to `security -i` on stdin so the key never appears in a process's arguments.
     @discardableResult
     static func saveKey(_ key: String) -> Bool {
@@ -76,6 +85,7 @@ enum Connection {
             && keychainKey() == key
     }
 
+    @discardableResult
     private static func runSecurity(_ arguments: [String], input: String? = nil) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
@@ -124,7 +134,7 @@ enum ProxyDiscovery {
 
     /// The default port, plus any `port:` from a config.yaml in the usual places.
     private static func candidatePorts() -> [Int] {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path()
+        let home = FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false)
         let paths = [
             "\(home)/.cli-proxy-api/config.yaml",
             "\(home)/.config/cliproxyapi/config.yaml",

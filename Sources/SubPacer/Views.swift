@@ -774,7 +774,7 @@ struct SettingsCard: View {
 
 // MARK: - Connection
 
-/// Points ProxyBar at a CLIProxyAPI: shown on first run, when the proxy refuses the
+/// Points SubPacer at a CLIProxyAPI: shown on first run, when the proxy refuses the
 /// current settings, and in settings.
 struct ConnectionCard: View {
     let store: UsageStore

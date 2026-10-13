@@ -3,11 +3,13 @@ import ServiceManagement
 import SwiftUI
 
 @main
-struct ProxyBarApp: App {
-    private let store = UsageStore.shared
+struct SubPacerApp: App {
+    private let store: UsageStore
 
     init() {
-        if let path = ProcessInfo.processInfo.environment["PROXYBAR_SNAPSHOT"] {
+        LegacyMigration.run()
+        store = UsageStore.shared
+        if let path = ProcessInfo.processInfo.environment["SUBPACER_SNAPSHOT"] {
             DebugSnapshot.run(to: path)
             return
         }

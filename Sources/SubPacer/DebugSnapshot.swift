@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// `PROXYBAR_SNAPSHOT=/tmp/panel.png [PROXYBAR_APPEARANCE=dark] ProxyBar` refreshes once,
+/// `SUBPACER_SNAPSHOT=/tmp/panel.png [SUBPACER_APPEARANCE=dark] SubPacer` refreshes once,
 /// shows the panel in an on-screen window (so glass effects render), captures it and exits.
 enum DebugSnapshot {
     @MainActor
@@ -10,13 +10,13 @@ enum DebugSnapshot {
             let store = UsageStore.shared
             await store.refresh()
 
-            let appearance: NSAppearance? = switch ProcessInfo.processInfo.environment["PROXYBAR_APPEARANCE"] {
+            let appearance: NSAppearance? = switch ProcessInfo.processInfo.environment["SUBPACER_APPEARANCE"] {
             case "dark": NSAppearance(named: .darkAqua)
             case "light": NSAppearance(named: .aqua)
             default: nil
             }
 
-            let hosting = NSHostingView(rootView: UsagePanel(store: store, showSettings: ProcessInfo.processInfo.environment["PROXYBAR_SETTINGS"] != nil))
+            let hosting = NSHostingView(rootView: UsagePanel(store: store, showSettings: ProcessInfo.processInfo.environment["SUBPACER_SETTINGS"] != nil))
             hosting.frame.size = hosting.fittingSize
             let background = NSVisualEffectView(frame: hosting.frame)
             background.material = .popover

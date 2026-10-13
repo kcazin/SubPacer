@@ -1,6 +1,6 @@
-# ProxyBar
+# SubPacer
 
-A macOS menu bar app that shows the Claude and Codex quota of every account in your [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI).
+Pace your Claude and Codex subscription limits. A macOS menu bar app that shows the quota of every account in your [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) and forecasts whether your pace makes it to the next reset.
 
 - **Per-account quota**: session and weekly limits, when they reset, and whether your current pace runs out first.
 - **Runway**: pools each provider's accounts (the proxy fails over between them) and simulates forward to the last weekly reset, following your activity pattern and letting limits refill as they reset. Shows whether you ever run out, when, and how much faster or slower you could go. The menu bar shows the result in one of several styles.
@@ -18,26 +18,26 @@ A macOS menu bar app that shows the Claude and Codex quota of every account in y
 ## Install
 
 ```sh
-git clone https://github.com/kcazin/ProxyBar.git
-cd ProxyBar
-./build.sh   # builds, signs ad hoc, installs ~/Applications/ProxyBar.app
-open ~/Applications/ProxyBar.app
+git clone https://github.com/kcazin/SubPacer.git
+cd SubPacer
+./build.sh   # builds, signs ad hoc, installs ~/Applications/SubPacer.app
+open ~/Applications/SubPacer.app
 ```
 
 ## Connect to your proxy
 
-ProxyBar uses CLIProxyAPI's management API, which is off until it has a key. In the proxy's `config.yaml`:
+SubPacer uses CLIProxyAPI's management API, which is off until it has a key. In the proxy's `config.yaml`:
 
 ```yaml
 remote-management:
   secret-key: "pick-a-long-random-key"   # the proxy hashes this on its next start
-  allow-remote: false                    # true only if ProxyBar runs on another machine
+  allow-remote: false                    # true only if SubPacer runs on another machine
 ```
 
-Restart the proxy, then click the ProxyBar menu bar icon. On first run it shows a setup card:
+Restart the proxy, then click the SubPacer menu bar icon. On first run it shows a setup card:
 
 1. **Find local** looks for a proxy on this Mac (port 8317, plus any `port:` from a `config.yaml` in `~/.cli-proxy-api`, `~/.config/cliproxyapi` or Homebrew's `etc`). Or type the URL.
-2. Paste the key you chose above and click **Connect**. ProxyBar checks it against the proxy before saving anything.
+2. Paste the key you chose above and click **Connect**. SubPacer checks it against the proxy before saving anything.
 
 Change these later in settings (gear icon, ⌘,).
 
@@ -45,30 +45,30 @@ A proxy on another machine must be reached over `https://` (for example behind a
 
 ## Security and privacy
 
-- **Tokens stay in the proxy.** Quota requests go through the proxy's `/v0/management/api-call`, which inserts each account's token server-side. ProxyBar never sees a provider credential.
-- **The management key** lives in your login Keychain (service `ProxyBar`, account `management-key`). It's written through `/usr/bin/security` on stdin, never on a command line.
-- **No retry storms.** CLIProxyAPI bans an address for ~30 minutes after 5 failed logins, so after a rejected key ProxyBar stops until you change the key or URL.
+- **Tokens stay in the proxy.** Quota requests go through the proxy's `/v0/management/api-call`, which inserts each account's token server-side. SubPacer never sees a provider credential.
+- **The management key** lives in your login Keychain (service `SubPacer`, account `management-key`). It's written through `/usr/bin/security` on stdin, never on a command line.
+- **No retry storms.** CLIProxyAPI bans an address for ~30 minutes after 5 failed logins, so after a rejected key SubPacer stops until you change the key or URL.
 - **The key is only sent to the configured host.** Redirects are refused, and responses aren't cached to disk.
 - **Emails are blurred** in the panel by default, so it's safe to screenshot. Click an address to show it until the panel closes; turn blurring off in settings.
-- **Local data**: usage history and the learned activity profile are kept in `~/Library/Application Support/ProxyBar`. Nothing is sent anywhere except your proxy (and, through it, the providers' usage endpoints).
+- **Local data**: usage history and the learned activity profile are kept in `~/Library/Application Support/SubPacer`. Nothing is sent anywhere except your proxy (and, through it, the providers' usage endpoints).
 
 ## Configuration
 
 | Setting | How |
 | --- | --- |
-| Proxy URL | Settings, or `defaults write dev.killian.proxybar proxyURL https://host:8317` |
-| Management key | Settings, or `security add-generic-password -U -s ProxyBar -a management-key -w` (prompts for it) |
-| Overrides for one run | `PROXYBAR_URL`, `PROXYBAR_MANAGEMENT_KEY` environment variables |
+| Proxy URL | Settings, or `defaults write dev.killian.subpacer proxyURL https://host:8317` |
+| Management key | Settings, or `security add-generic-password -U -s SubPacer -a management-key -w` (prompts for it) |
+| Overrides for one run | `SUBPACER_URL`, `SUBPACER_MANAGEMENT_KEY` environment variables |
 
-ProxyBar refreshes every 5 minutes and whenever the panel opens, and honors `Retry-After` from the providers' usage APIs.
+SubPacer refreshes every 5 minutes and whenever the panel opens, and honors `Retry-After` from the providers' usage APIs.
 
 ## Debugging
 
 ```sh
-PROXYBAR_SNAPSHOT=/tmp/panel.png ~/Applications/ProxyBar.app/Contents/MacOS/ProxyBar
+SUBPACER_SNAPSHOT=/tmp/panel.png ~/Applications/SubPacer.app/Contents/MacOS/SubPacer
 ```
 
-renders the panel once to a PNG and prints the parsed quota (including account emails) to stdout. Add `PROXYBAR_SETTINGS=1` for the settings view or `PROXYBAR_APPEARANCE=dark|light`. Run it from the app bundle: macOS grants network access per app, so a bare `.build/debug/ProxyBar` may not reach a proxy on your network.
+renders the panel once to a PNG and prints the parsed quota (including account emails) to stdout. Add `SUBPACER_SETTINGS=1` for the settings view or `SUBPACER_APPEARANCE=dark|light`. Run it from the app bundle: macOS grants network access per app, so a bare `.build/debug/SubPacer` may not reach a proxy on your network.
 
 ## Adding a provider
 

@@ -17,7 +17,7 @@ struct ManagementClient: Sendable {
             switch self {
             case .unreachable(let detail): "Proxy not reachable (\(detail))"
             case .unauthorized(let detail): "Management key rejected\(detail.map { " (\($0))" } ?? ""). Paused until the key changes: the proxy bans an address after 5 failed attempts."
-            case .remoteDisabled: "Remote management is off. Set `remote-management.allow-remote: true` in the proxy's config.yaml, or run ProxyBar on the proxy's machine."
+            case .remoteDisabled: "Remote management is off. Set `remote-management.allow-remote: true` in the proxy's config.yaml, or run SubPacer on the proxy's machine."
             case .disabled: "Management API is off. Set `remote-management.secret-key` in the proxy's config.yaml and restart it."
             case .http(let code, let detail): "Proxy returned HTTP \(code)\(detail.map { ": \($0)" } ?? "")"
             }

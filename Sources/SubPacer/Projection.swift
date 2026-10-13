@@ -14,7 +14,7 @@ final class UsageHistory {
 
     init() {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appending(path: "ProxyBar")
+            .appending(path: "SubPacer")
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         url = directory.appending(path: "history.json")
         if let data = try? Data(contentsOf: url),
