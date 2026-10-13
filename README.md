@@ -70,10 +70,10 @@ Restart the proxy, then click the SubPacer menu bar icon. On first run it shows 
 1. **Find local** looks for a proxy on this Mac (port 8317, plus any `port:` from a `config.yaml` in `~/.cli-proxy-api`, `~/.config/cliproxyapi` or Homebrew's `etc`). Or type the URL.
 2. Paste the key you chose above and click **Connect**. SubPacer checks it against the proxy before saving anything.
 
-Change these later in settings (gear icon, ⌘,), which is also where you pick the menu bar style:
+Change these later in settings (gear icon, ⌘,), which is also where you pick the menu bar style and which sections the panel shows:
 
 <p align="center">
-  <img src="docs/screenshots/settings.png" alt="Settings: proxy connection, menu bar styles previewed with live numbers, email blurring" width="340">
+  <img src="docs/screenshots/settings.png" alt="Settings: proxy connection, menu bar styles previewed with live numbers, panel sections, email blurring" width="340">
 </p>
 
 A proxy on another machine must be reached over `https://` (for example behind a reverse proxy or `tailscale serve`), since the key is sent with every request. Plain `http://` is only accepted for `localhost`.

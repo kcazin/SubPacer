@@ -56,6 +56,10 @@ struct UsagePanel: View {
     /// Snapshots render the whole panel; on screen it scrolls once it would outgrow the display.
     var limitHeight = true
     @State private var cardsHeight: CGFloat = 0
+    @AppStorage(PanelSection.runway.storageKey) private var showRunway = true
+    @AppStorage(PanelSection.accounts.storageKey) private var showAccounts = true
+    @AppStorage(PanelSection.tonight.storageKey) private var showTonight = true
+    @AppStorage(PanelSection.proxy.storageKey) private var showProxy = true
 
     /// Room for the cards: the screen below the menu bar, minus the header, footer and a margin.
     private var maxCardsHeight: CGFloat {
@@ -102,22 +106,37 @@ struct UsagePanel: View {
                 .padding(10)
                 .glassEffect(.regular, in: .rect(cornerRadius: 14))
         }
-        if !store.runways.isEmpty {
+        if showRunway && !store.runways.isEmpty {
             RunwayCard(runways: store.runways)
         }
-        ForEach(store.accounts) { account in
-            AccountCard(account: account)
+        if showAccounts {
+            ForEach(store.accounts) { account in
+                AccountCard(account: account)
+            }
         }
         if store.accounts.isEmpty && store.proxyError == nil {
             ProgressView()
                 .controlSize(.small)
                 .frame(maxWidth: .infinity, minHeight: 80)
         }
-        if store.accounts.contains(where: { $0.offHours != nil }) {
+        if showTonight && store.accounts.contains(where: { $0.offHours != nil }) {
             OffHoursCard(store: store)
         }
-        if !store.accounts.isEmpty {
+        if showProxy && !store.accounts.isEmpty {
             ProxySection(store: store)
+        }
+        if !store.accounts.isEmpty && !(showRunway || showAccounts || showTonight || showProxy) {
+            Button {
+                withAnimation(.snappy(duration: 0.25)) { showSettings = true }
+            } label: {
+                Label("All sections are hidden. Show some in settings.", systemImage: "eye.slash")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .glassEffect(.regular, in: .rect(cornerRadius: 14))
         }
     }
 
@@ -773,6 +792,14 @@ struct SettingsCard: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Panel")
+                    .font(.system(size: 12, weight: .semibold))
+                ForEach(PanelSection.allCases) { section in
+                    SectionToggle(section: section)
+                }
+            }
+            Divider()
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Blur email addresses").font(.system(size: 11, weight: .medium))
@@ -789,6 +816,59 @@ struct SettingsCard: View {
         }
         .padding(12)
         .glassEffect(.regular, in: .rect(cornerRadius: 16))
+    }
+}
+
+// MARK: - Panel sections
+
+/// The cards the panel can show, each of which can be hidden in settings.
+enum PanelSection: String, CaseIterable, Identifiable {
+    case runway, accounts, tonight, proxy
+
+    var id: String { rawValue }
+    var storageKey: String { "show.\(rawValue)" }
+
+    var title: String {
+        switch self {
+        case .runway: "Runway"
+        case .accounts: "Accounts"
+        case .tonight: "Tonight"
+        case .proxy: "Proxy stats"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .runway: "pooled forecast per provider"
+        case .accounts: "quota and limit resets per account"
+        case .tonight: "quiet hours and spare weekly quota"
+        case .proxy: "requests and failures, last 3h"
+        }
+    }
+}
+
+struct SectionToggle: View {
+    let section: PanelSection
+    @AppStorage private var isOn: Bool
+
+    init(section: PanelSection) {
+        self.section = section
+        _isOn = AppStorage(wrappedValue: true, section.storageKey)
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(section.title).font(.system(size: 11, weight: .medium))
+            Text("· \(section.detail)")
+                .font(.system(size: 10.5))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            Toggle(section.title, isOn: $isOn.animation(.snappy(duration: 0.25)))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+        }
     }
 }
 
