@@ -53,23 +53,39 @@ enum Severity {
 struct UsagePanel: View {
     let store: UsageStore
     @State var showSettings = false
+    /// Snapshots render the whole panel; on screen it scrolls once it would outgrow the display.
+    var limitHeight = true
+    @State private var cardsHeight: CGFloat = 0
+
+    /// Room for the cards: the screen below the menu bar, minus the header, footer and a margin.
+    private var maxCardsHeight: CGFloat {
+        guard limitHeight, let screen = NSScreen.main else { return .infinity }
+        return max(240, screen.visibleFrame.height - 110)
+    }
 
     var body: some View {
         VStack(spacing: 10) {
             header
 
-            GlassEffectContainer(spacing: 8) {
-                VStack(spacing: 8) {
-                    if showSettings {
-                        ConnectionCard(store: store)
-                        SettingsCard(store: store)
-                    } else if store.needsSetup {
-                        ConnectionCard(store: store)
-                    } else {
-                        content
+            // The glass container goes inside the scroll view so the cards clip at its edges.
+            ScrollView {
+                GlassEffectContainer(spacing: 8) {
+                    VStack(spacing: 8) {
+                        if showSettings {
+                            ConnectionCard(store: store)
+                            SettingsCard(store: store)
+                        } else if store.needsSetup {
+                            ConnectionCard(store: store)
+                        } else {
+                            content
+                        }
                     }
                 }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardsHeight = $0 }
             }
+            .scrollBounceBehavior(.basedOnSize)
+            .scrollIndicators(cardsHeight > maxCardsHeight ? .automatic : .hidden)
+            .frame(height: min(cardsHeight, maxCardsHeight))
 
             footer
         }

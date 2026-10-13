@@ -16,7 +16,13 @@ enum DebugSnapshot {
             default: nil
             }
 
-            let hosting = NSHostingView(rootView: UsagePanel(store: store, showSettings: ProcessInfo.processInfo.environment["SUBPACER_SETTINGS"] != nil))
+            let hosting = NSHostingView(rootView: UsagePanel(
+                store: store, showSettings: ProcessInfo.processInfo.environment["SUBPACER_SETTINGS"] != nil, limitHeight: false
+            ))
+            // The cards measure themselves on the first layout pass, so size the window after it.
+            hosting.frame.size = hosting.fittingSize
+            hosting.layoutSubtreeIfNeeded()
+            try? await Task.sleep(for: .milliseconds(300))
             hosting.frame.size = hosting.fittingSize
             let background = NSVisualEffectView(frame: hosting.frame)
             background.material = .popover
