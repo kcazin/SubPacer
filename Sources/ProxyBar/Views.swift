@@ -201,6 +201,19 @@ struct AccountCard: View {
                     }
                 }
             }
+
+            if let advice = account.resetAdvice {
+                ResetRow(advice: advice, email: account.email)
+            } else if let spent = account.snapshot.resetGrants.first(where: { $0.resetsLeft == 0 }) {
+                HStack {
+                    Text("Reset").frame(width: WindowRow.labelWidth, alignment: .leading)
+                    Text("Used · \(ResetRow.shortLabel(spent))").lineLimit(1)
+                    Spacer()
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .help(spent.label)
+            }
         }
         .padding(12)
         .glassEffect(.regular.tint(tint.opacity(0.05)), in: .rect(cornerRadius: 16))
@@ -229,6 +242,81 @@ struct AccountCard: View {
                 .padding(.vertical, 2)
                 .background(Capsule().fill(Color.primary.opacity(0.07)))
         }
+    }
+}
+
+// MARK: - Limit reset
+
+/// An unused limit reset on the account, and whether now is the moment to spend it.
+struct ResetRow: View {
+    let advice: ResetAdvice
+    let email: String
+
+    private var grant: ResetGrant { advice.grant }
+
+    private var tint: Color {
+        switch advice.action {
+        case .useNow: Palette.critical
+        case .useAt, .useBeforeExpiry: Palette.warning
+        case .hold: Palette.ok
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.counterclockwise.circle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(tint)
+                Text("Limit reset")
+                    .font(.system(size: 11, weight: .medium))
+                Text(grant.resetsTotal > 1 ? "\(grant.resetsLeft) left" : "available")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                Text(headline)
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(advice.action == .hold ? AnyShapeStyle(.secondary) : AnyShapeStyle(tint))
+            }
+            Text(detail)
+                .font(.system(size: 10.5))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(9)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(tint.opacity(0.08)))
+        .help("\(grant.label). Refills \(limits) at once; the weekly reset day stays the same. Use it with /limit-reset in Claude Code signed in as \(email).")
+    }
+
+    private var headline: String {
+        switch advice.action {
+        case .useNow: "Use now"
+        case .useAt(let date): "Use \(ResetFormatter.clock(date))"
+        case .useBeforeExpiry(let date): "Use by \(ResetFormatter.clock(date))"
+        case .hold: "Hold"
+        }
+    }
+
+    private var detail: String {
+        guard let ends = grant.endsAt, advice.action != .useBeforeExpiry(ends) else { return advice.reason }
+        return "\(advice.reason) · expires \(Self.date(ends))"
+    }
+
+    private var limits: String {
+        let names = grant.clears.compactMap { ["five_hour": "session", "seven_day": "weekly"][$0] }
+        return names.isEmpty ? "your limits" : "your \(names.joined(separator: " and ")) limits"
+    }
+
+    /// "Claude Opus 5.5 launch" from "Claude Opus 5.5 launch: one usage-limit reset for Pro and Max".
+    static func shortLabel(_ grant: ResetGrant) -> String {
+        grant.label.split(separator: ":").first.map(String.init) ?? grant.label
+    }
+
+    /// Weekday within the week, otherwise the date.
+    static func date(_ date: Date) -> String {
+        date.timeIntervalSinceNow < 6 * 86_400
+            ? ResetFormatter.clock(date)
+            : date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
     }
 }
 

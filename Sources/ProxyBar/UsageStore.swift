@@ -18,6 +18,7 @@ struct AccountUsage: Identifiable, Sendable {
     /// Keyed by `QuotaWindow.id`.
     var projections: [String: Projection] = [:]
     var offHours: OffHoursInsight?
+    var resetAdvice: ResetAdvice?
 
     var provider: (any QuotaProvider.Type)? { QuotaProviders.provider(for: providerID) }
     var displayName: String { provider?.displayName ?? providerID.capitalized }
@@ -190,6 +191,9 @@ final class UsageStore {
                 )
             }
             merged[index].offHours = OffHoursInsight.make(for: merged[index], profile: profile, now: recordedAt)
+            merged[index].resetAdvice = ResetPlanner.advice(
+                for: merged[index], runway: runways.first { $0.providerID == merged[index].providerID }, now: recordedAt
+            )
         }
         accounts = merged
         lastUpdated = Date()

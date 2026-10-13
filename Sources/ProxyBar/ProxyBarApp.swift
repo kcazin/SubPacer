@@ -53,6 +53,12 @@ struct MenuBarLabel: View {
             ForEach(store.menuBarItems(now: now)) { item in
                 MenuBarItemView(item: item, style: style, colored: colored, foreground: foreground)
             }
+            // A limit reset should be spent now: the pool is out with plenty of the week left.
+            if store.accounts.contains(where: { $0.resetAdvice?.action == .useNow }) {
+                Image(systemName: "arrow.counterclockwise.circle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(colored ? Palette.critical : foreground)
+            }
         }
         .environment(\.colorScheme, colorScheme)
         let scale = NSScreen.main?.backingScaleFactor ?? 2

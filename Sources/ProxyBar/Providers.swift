@@ -17,6 +17,26 @@ struct QuotaSnapshot: Sendable {
     var plan: String?
     var windows: [QuotaWindow] = []
     var credits: String?
+    var resetGrants: [ResetGrant] = []
+}
+
+/// A one-off limit reset granted to the account (e.g. at a model launch). Using it refills the
+/// limits in `clears` at once; the weekly reset day stays where it was.
+struct ResetGrant: Identifiable, Hashable, Sendable {
+    let id: String
+    let label: String
+    let resetsLeft: Int
+    let resetsTotal: Int
+    /// Last moment it can be used.
+    let endsAt: Date?
+    /// Limit IDs it refills, e.g. `five_hour`, `seven_day`.
+    let clears: [String]
+    let paused: Bool
+    let usableNow: Bool
+    /// Only usable while a limit is reached.
+    let requiresLimit: Bool
+
+    var isAvailable: Bool { resetsLeft > 0 && !paused }
 }
 
 /// Knows how to ask a provider for quota through the proxy and how to read the answer.
@@ -52,10 +72,12 @@ enum ClaudeQuota: QuotaProvider {
     static let reloginHint = "Run `cliproxyapi -claude-login` to sign in again."
 
     static func request(for auth: AuthFile) -> (url: String, headers: [String: String]) {
-        ("https://api.anthropic.com/api/oauth/usage", [
+        // `cedar_ember=1` adds limit-reset grants, which are only offered to a recent Claude Code.
+        ("https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1", [
             "Authorization": "Bearer $TOKEN$",
             "anthropic-beta": "oauth-2025-04-20",
             "Accept": "application/json",
+            "User-Agent": "claude-cli/\(ClaudeCodeVersion.installed) (external, cli)",
         ])
     }
 
@@ -88,8 +110,39 @@ enum ClaudeQuota: QuotaProvider {
             ))
         }
         windows.sort { (order.firstIndex(of: $0.id) ?? .max, $0.id) < (order.firstIndex(of: $1.id) ?? .max, $1.id) }
-        return QuotaSnapshot(windows: windows)
+        return QuotaSnapshot(windows: windows, resetGrants: resetGrants(in: object["cedar_ember"]))
     }
+
+    private static func resetGrants(in status: Any?) -> [ResetGrant] {
+        guard let grants = (status as? [String: Any])?["grants"] as? [[String: Any]] else { return [] }
+        return grants.compactMap { grant in
+            guard let id = grant["id"] as? String, let left = (grant["resets_left"] as? NSNumber)?.intValue else { return nil }
+            return ResetGrant(
+                id: id,
+                label: grant["label"] as? String ?? "Limit reset",
+                resetsLeft: left,
+                resetsTotal: (grant["resets_total"] as? NSNumber)?.intValue ?? left,
+                endsAt: (grant["ends_at"] as? String).flatMap(DateParsing.iso8601),
+                clears: grant["clears"] as? [String] ?? [],
+                paused: grant["paused"] as? Bool ?? false,
+                usableNow: grant["usable_now"] as? Bool ?? false,
+                requiresLimit: grant["use_requires_limit"] as? Bool ?? true
+            )
+        }
+    }
+}
+
+/// The newest Claude Code installed here; Anthropic gates some usage fields on the client version.
+enum ClaudeCodeVersion {
+    static let installed: String = {
+        let fallback = "2.1.296"
+        let directory = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".local/share/claude/versions")
+        let versions = (try? FileManager.default.contentsOfDirectory(atPath: directory.path())) ?? []
+        return versions
+            .filter { $0.range(of: #"^\d+\.\d+\.\d+$"#, options: .regularExpression) != nil }
+            .max { $0.compare($1, options: .numeric) == .orderedAscending }
+            .map { $0.compare(fallback, options: .numeric) == .orderedAscending ? fallback : $0 } ?? fallback
+    }()
 }
 
 // MARK: - Codex
