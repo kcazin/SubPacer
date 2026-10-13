@@ -5,12 +5,14 @@ enum Connection {
     static let defaultURL = URL(string: "http://127.0.0.1:8317")!
 
     static var configuredURL: String? {
-        ProcessInfo.processInfo.environment["SUBPACER_URL"] ?? UserDefaults.standard.string(forKey: "proxyURL")
+        if Demo.isActive { return defaultURL.absoluteString }
+        return ProcessInfo.processInfo.environment["SUBPACER_URL"] ?? UserDefaults.standard.string(forKey: "proxyURL")
     }
 
     /// Throws when the configured URL is unusable, rather than quietly talking to a different proxy.
     static func proxyURL() throws -> URL {
-        try configuredURL.map(parse) ?? defaultURL
+        if Demo.isActive { return Demo.proxyURL }
+        return try configuredURL.map(parse) ?? defaultURL
     }
 
     static func saveProxyURL(_ url: URL) {
@@ -55,6 +57,7 @@ enum Connection {
     /// The key goes through `security` rather than SecItem, so rebuilding the ad-hoc signed app
     /// doesn't make the Keychain prompt for access again.
     static func loadKey() -> String? {
+        if Demo.isActive { return "demo" }
         if let env = ProcessInfo.processInfo.environment["SUBPACER_MANAGEMENT_KEY"], !env.isEmpty {
             return env
         }

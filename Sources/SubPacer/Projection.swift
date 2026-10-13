@@ -13,9 +13,7 @@ final class UsageHistory {
     private let retention: TimeInterval = 8 * 86_400
 
     init() {
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appending(path: "SubPacer")
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = AppPaths.support
         url = directory.appending(path: "history.json")
         if let data = try? Data(contentsOf: url),
            let decoded = try? JSONDecoder().decode([String: [UsageSample]].self, from: data) {

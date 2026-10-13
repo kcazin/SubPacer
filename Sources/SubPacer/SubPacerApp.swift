@@ -7,7 +7,7 @@ struct SubPacerApp: App {
     private let store: UsageStore
 
     init() {
-        LegacyMigration.run()
+        if Demo.isActive { Demo.prepare() } else { LegacyMigration.run() }
         store = UsageStore.shared
         if let path = ProcessInfo.processInfo.environment["SUBPACER_SNAPSHOT"] {
             DebugSnapshot.run(to: path)

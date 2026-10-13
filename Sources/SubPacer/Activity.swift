@@ -13,9 +13,7 @@ final class ActivityLog {
     private let retentionBuckets = 28 * 86_400 / 600
 
     init() {
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appending(path: "SubPacer")
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let directory = AppPaths.support
         url = directory.appending(path: "activity.json")
         if let data = try? Data(contentsOf: url),
            let decoded = try? JSONDecoder().decode([String: Int].self, from: data) {

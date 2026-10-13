@@ -48,6 +48,7 @@ struct ManagementClient: Sendable {
     }
 
     private func send(path: String, method: String, body: Data?) async throws -> Data {
+        if baseURL == Demo.proxyURL { return try Demo.respond(path: path, body: body) }
         var request = URLRequest(url: baseURL.appending(path: "v0/management/\(path)"))
         request.httpMethod = method
         request.timeoutInterval = 20
