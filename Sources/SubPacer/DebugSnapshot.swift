@@ -46,6 +46,10 @@ enum DebugSnapshot {
             try? capture.run()
             capture.waitUntilExit()
 
+            if let menuBarPath = ProcessInfo.processInfo.environment["SUBPACER_MENUBAR"] {
+                writeMenuBar(store: store, dark: appearance?.name == .darkAqua, to: menuBarPath)
+            }
+
             for account in store.accounts {
                 let windows = account.snapshot.windows.map { "\($0.label)=\(Int($0.usedPercent))%" }.joined(separator: ", ")
                 print("\(account.providerID) \(account.email) error=\(account.error ?? "-") [\(windows)]")
@@ -57,5 +61,26 @@ enum DebugSnapshot {
             print("proxyError=\(store.proxyError ?? "-")")
             NSApplication.shared.terminate(nil)
         }
+    }
+
+    /// The menu bar label on a menu-bar-like strip, for the README.
+    @MainActor
+    private static func writeMenuBar(store: UsageStore, dark: Bool, to path: String) {
+        let style = UserDefaults.standard.string(forKey: "menuBarStyle").flatMap(MenuBarStyle.init(rawValue:)) ?? .forecast
+        guard let image = MenuBarRenderer.image(store: store, style: style, colored: true, colorScheme: dark ? .dark : .light, now: Date()) else { return }
+        let size = NSSize(width: image.size.width + 24, height: 26)
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2), bitsPerSample: 8,
+            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ) else { return }
+        bitmap.size = size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        (dark ? NSColor(white: 0.16, alpha: 1) : NSColor(white: 0.93, alpha: 1)).setFill()
+        NSRect(origin: .zero, size: size).fill()
+        image.draw(at: NSPoint(x: 12, y: (size.height - image.size.height) / 2), from: .zero, operation: .sourceOver, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        guard let png = bitmap.representation(using: .png, properties: [:]) else { return }
+        try? png.write(to: URL(fileURLWithPath: path))
     }
 }

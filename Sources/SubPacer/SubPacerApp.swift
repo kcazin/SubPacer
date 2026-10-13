@@ -38,17 +38,20 @@ struct MenuBarLabel: View {
     var body: some View {
         // `clock` ticks every minute so reset countdowns stay current between refreshes.
         // (A TimelineView inside a MenuBarExtra label causes a layout loop.)
-        if let image = rendered(now: store.clock) {
+        if let image = MenuBarRenderer.image(store: store, style: style, colored: colored, colorScheme: colorScheme, now: store.clock) {
             Image(nsImage: image)
         } else {
             Image(systemName: store.proxyError == nil ? "gauge.with.dots.needle.33percent" : "exclamationmark.triangle")
         }
     }
+}
 
-    /// MenuBarExtra labels drop inline SF Symbols from Text, so render the whole label as an image:
-    /// a template image in monochrome, or drawn for the current menu bar appearance in color.
+/// MenuBarExtra labels drop inline SF Symbols from Text, so the whole label is rendered as an image:
+/// a template image in monochrome, or drawn for the given appearance in color.
+/// The settings previews use the same image, so they show exactly what the menu bar will.
+enum MenuBarRenderer {
     @MainActor
-    private func rendered(now: Date) -> NSImage? {
+    static func image(store: UsageStore, style: MenuBarStyle, colored: Bool, colorScheme: ColorScheme, now: Date) -> NSImage? {
         guard !store.accounts.isEmpty else { return nil }
         let foreground: Color = colored && colorScheme == .dark ? .white : .black
         let content = HStack(spacing: 8) {
@@ -62,6 +65,7 @@ struct MenuBarLabel: View {
                     .foregroundStyle(colored ? Palette.critical : foreground)
             }
         }
+        .fixedSize()
         .environment(\.colorScheme, colorScheme)
         let scale = NSScreen.main?.backingScaleFactor ?? 2
         let renderer = ImageRenderer(content: content)

@@ -741,6 +741,7 @@ struct SettingsCard: View {
     @AppStorage("menuBarStyle") private var style = MenuBarStyle.forecast
     @AppStorage("menuBarColor") private var colored = true
     @AppStorage(Privacy.blurKey) private var blurEmails = true
+    @Environment(\.colorScheme) private var colorScheme
 
     private let columns = [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)]
 
@@ -756,11 +757,14 @@ struct SettingsCard: View {
                     .font(.system(size: 11))
             }
             TimelineView(.periodic(from: .now, by: 60)) { context in
-                let items = store.menuBarItems(now: context.date)
                 LazyVGrid(columns: columns, spacing: 6) {
                     ForEach(MenuBarStyle.allCases) { option in
-                        StyleTile(style: option, items: items, colored: colored, selected: option == style)
-                            .onTapGesture { style = option }
+                        StyleTile(
+                            style: option,
+                            image: MenuBarRenderer.image(store: store, style: option, colored: colored, colorScheme: colorScheme, now: context.date),
+                            selected: option == style
+                        )
+                        .onTapGesture { style = option }
                     }
                 }
             }
@@ -933,17 +937,23 @@ struct EmailText: View {
 /// A live preview of one menu bar style, with your current numbers.
 struct StyleTile: View {
     let style: MenuBarStyle
-    let items: [MenuBarItem]
-    let colored: Bool
+    let image: NSImage?
     let selected: Bool
 
     var body: some View {
         VStack(spacing: 5) {
-            HStack(spacing: 8) {
-                ForEach(items) { item in
-                    MenuBarItemView(item: item, style: style, colored: colored, foreground: .primary)
+            Group {
+                if let image {
+                    // Shrinks to fit when several providers make the label wider than the tile.
+                    Image(nsImage: image)
+                        .renderingMode(image.isTemplate ? .template : .original)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: image.size.width, maxHeight: image.size.height)
+                        .foregroundStyle(.primary)
                 }
             }
+            .padding(.horizontal, 6)
             .frame(maxWidth: .infinity, minHeight: 26)
             .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
             Text(style.title)
