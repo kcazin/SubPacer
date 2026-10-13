@@ -61,7 +61,10 @@ struct UsagePanel: View {
             GlassEffectContainer(spacing: 8) {
                 VStack(spacing: 8) {
                     if showSettings {
+                        ConnectionCard(store: store)
                         SettingsCard(store: store)
+                    } else if store.needsSetup {
+                        ConnectionCard(store: store)
                     } else {
                         content
                     }
@@ -73,6 +76,7 @@ struct UsagePanel: View {
         .padding(12)
         .frame(width: 340)
         .task { await store.refreshIfStale() }
+        .onDisappear { Privacy.shared.revealed.removeAll() }
     }
 
     @ViewBuilder
@@ -230,7 +234,7 @@ struct AccountCard: View {
                         .foregroundStyle(.white)
                 )
                 .shadow(color: tint.opacity(0.35), radius: 3, y: 1)
-            Text(account.email)
+            EmailText(email: account.email)
                 .font(.system(size: 12, weight: .semibold))
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -251,6 +255,7 @@ struct AccountCard: View {
 struct ResetRow: View {
     let advice: ResetAdvice
     let email: String
+    @AppStorage(Privacy.blurKey) private var blurEmails = true
 
     private var grant: ResetGrant { advice.grant }
 
@@ -285,7 +290,7 @@ struct ResetRow: View {
         }
         .padding(9)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(tint.opacity(0.08)))
-        .help("\(grant.label). Refills \(limits) at once; the weekly reset day stays the same. Use it with /limit-reset in Claude Code signed in as \(email).")
+        .help("\(grant.label). Refills \(limits) at once; the weekly reset day stays the same. Use it with /limit-reset in Claude Code signed in as \(blurEmails && !Privacy.shared.revealed.contains(email) ? "this account" : email).")
     }
 
     private var headline: String {
@@ -719,6 +724,7 @@ struct SettingsCard: View {
     let store: UsageStore
     @AppStorage("menuBarStyle") private var style = MenuBarStyle.forecast
     @AppStorage("menuBarColor") private var colored = true
+    @AppStorage(Privacy.blurKey) private var blurEmails = true
 
     private let columns = [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)]
 
@@ -746,9 +752,165 @@ struct SettingsCard: View {
                 .font(.system(size: 10.5))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            Divider()
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Blur email addresses").font(.system(size: 11, weight: .medium))
+                    Text("Click one to show it until the panel closes.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("Blur email addresses", isOn: $blurEmails)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+            }
         }
         .padding(12)
         .glassEffect(.regular, in: .rect(cornerRadius: 16))
+    }
+}
+
+// MARK: - Connection
+
+/// Points ProxyBar at a CLIProxyAPI: shown on first run, when the proxy refuses the
+/// current settings, and in settings.
+struct ConnectionCard: View {
+    let store: UsageStore
+    @State private var urlText = ""
+    @State private var key = ""
+    @State private var hasSavedKey = false
+    @State private var working = false
+    @State private var message: (text: String, isError: Bool)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text("CLIProxyAPI")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Button("Find local") { Task { await detect() } }
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+                    .disabled(working)
+                    .help("Look for a proxy on this Mac (port 8317 and any port in its config.yaml)")
+            }
+            if store.needsSetup, message == nil, let error = store.proxyError {
+                Banner(text: error, symbol: "exclamationmark.triangle.fill", tint: Palette.warning)
+            }
+            field("URL") {
+                TextField("http://127.0.0.1:8317", text: $urlText)
+                    .onSubmit { Task { await connect() } }
+            }
+            field("Key") {
+                SecureField(hasSavedKey ? "Saved in Keychain" : "remote-management.secret-key", text: $key)
+                    .onSubmit { Task { await connect() } }
+            }
+            HStack(spacing: 6) {
+                if working {
+                    ProgressView().controlSize(.mini)
+                } else if let message {
+                    Image(systemName: message.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                        .foregroundStyle(message.isError ? Palette.critical : Palette.ok)
+                }
+                Text(.init(message?.text ?? "The key stays in your login Keychain."))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                Button("Connect") { Task { await connect() } }
+                    .buttonStyle(.glassProminent)
+                    .controlSize(.small)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(working || urlText.trimmingCharacters(in: .whitespaces).isEmpty || (key.isEmpty && !hasSavedKey))
+            }
+            .font(.system(size: 10.5))
+        }
+        .padding(12)
+        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .onAppear {
+            urlText = Connection.configuredURL ?? Connection.defaultURL.absoluteString
+            hasSavedKey = Connection.loadKey() != nil
+        }
+    }
+
+    private func field(_ label: String, @ViewBuilder content: () -> some View) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, alignment: .leading)
+            content()
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+                .font(.system(size: 11))
+                .disabled(working)
+        }
+    }
+
+    private func connect() async {
+        working = true
+        defer { working = false }
+        do {
+            try await store.connect(urlText: urlText, key: key)
+            key = ""
+            hasSavedKey = true
+            message = ("Connected · \(store.accounts.count) account\(store.accounts.count == 1 ? "" : "s")", false)
+        } catch {
+            message = (error.localizedDescription, true)
+        }
+    }
+
+    private func detect() async {
+        working = true
+        defer { working = false }
+        switch await ProxyDiscovery.detect() {
+        case .found(let url):
+            urlText = url.absoluteString
+            message = ("Found a proxy at \(url.host() ?? ""):\(url.port ?? 0). Add its key and connect.", false)
+        case .managementOff(let url):
+            urlText = url.absoluteString
+            message = ("Found a proxy, but its management API is off. Set `remote-management.secret-key` in its config.yaml and restart it.", true)
+        case .notFound:
+            message = ("No proxy answering on this Mac. Enter its URL instead.", true)
+        }
+    }
+}
+
+// MARK: - Privacy
+
+/// Which blurred addresses the user has clicked to show. Cleared when the panel closes.
+@MainActor
+@Observable
+final class Privacy {
+    static let shared = Privacy()
+    static let blurKey = "blurEmails"
+    var revealed: Set<String> = []
+}
+
+/// An account email, blurred by default so the panel can be screenshotted or shared. Click to show or hide it.
+struct EmailText: View {
+    let email: String
+    @AppStorage(Privacy.blurKey) private var blurEmails = true
+    private let privacy = Privacy.shared
+
+    private var hidden: Bool { blurEmails && !privacy.revealed.contains(email) }
+
+    var body: some View {
+        Text(email)
+            .blur(radius: hidden ? 4.5 : 0)
+            .animation(.snappy(duration: 0.2), value: hidden)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard blurEmails else { return }
+                if privacy.revealed.contains(email) { privacy.revealed.remove(email) } else { privacy.revealed.insert(email) }
+            }
+            .help(blurEmails ? (hidden ? "Click to show" : "Click to hide") : "")
+            .accessibilityLabel(hidden ? "Hidden email address" : email)
+            .accessibilityAddTraits(blurEmails ? .isButton : [])
     }
 }
 
@@ -847,7 +1009,7 @@ struct InsightRow: View {
                 .frame(width: 5, height: 5)
                 .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
             VStack(alignment: .leading, spacing: 1) {
-                Text(account.email)
+                EmailText(email: account.email)
                     .font(.system(size: 11, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -1001,7 +1163,7 @@ struct ProxyAccountRow: View {
             Circle()
                 .fill(account.provider?.tint ?? .gray)
                 .frame(width: 5, height: 5)
-            Text(account.email)
+            EmailText(email: account.email)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)

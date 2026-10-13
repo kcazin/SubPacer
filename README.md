@@ -1,31 +1,79 @@
 # ProxyBar
 
-Menu bar quota monitor for the accounts in a local CLIProxyAPI.
+A macOS menu bar app that shows the Claude and Codex quota of every account in your [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI).
 
-- Lists accounts from the proxy's management API (`/v0/management/auth-files`).
-- Fetches Claude and Codex quota through `/v0/management/api-call`, so the proxy injects and refreshes the credentials; ProxyBar never reads tokens.
-- **Runway**: pools each provider's accounts (the proxy fails over between them) and simulates forward to the last weekly reset, following your activity pattern and letting limits refill as they reset. Shows whether you ever run out, when, and how much faster or slower you could go. The menu bar shows ✓ or the projected run-out time per provider.
-- Shows request counts per account from the proxy (last ~3h) as secondary info.
-- Refreshes every 5 minutes and when the panel opens; honors `Retry-After` from provider usage APIs.
+- **Per-account quota**: session and weekly limits, when they reset, and whether your current pace runs out first.
+- **Runway**: pools each provider's accounts (the proxy fails over between them) and simulates forward to the last weekly reset, following your activity pattern and letting limits refill as they reset. Shows whether you ever run out, when, and how much faster or slower you could go. The menu bar shows the result in one of several styles.
+- **Quiet hours**: learns when you use the proxy and shows how much weekly quota will expire unused each night.
+- **Limit resets**: shows one-off Claude limit-reset grants and when spending one buys the most.
+- **Proxy stats**: request counts and failures per account over the last ~3h.
 
-## Setup
+> **Unofficial.** Quota comes from the providers' own, undocumented usage endpoints (the ones their CLIs use). They can change or disappear without notice. Not affiliated with Anthropic, OpenAI or the CLIProxyAPI project.
 
-The proxy needs `remote-management.secret-key` set (localhost-only access is fine). The same key goes in the login Keychain:
+## Requirements
 
-```sh
-security add-generic-password -U -s ProxyBar -a management-key -w '<key>'
-```
+- macOS 26 and Swift 6.2 (Xcode 26 or the matching command line tools)
+- A running CLIProxyAPI with Claude and/or Codex accounts signed in
 
-Proxy URL defaults to `http://127.0.0.1:8317`; override with `defaults write dev.killian.proxybar proxyURL http://host:port`.
-
-## Build
+## Install
 
 ```sh
-./build.sh   # builds, signs ad-hoc, installs to ~/Applications/ProxyBar.app
+git clone https://github.com/kcazin/ProxyBar.git
+cd ProxyBar
+./build.sh   # builds, signs ad hoc, installs ~/Applications/ProxyBar.app
+open ~/Applications/ProxyBar.app
 ```
 
-`PROXYBAR_SNAPSHOT=/tmp/panel.png ~/Applications/ProxyBar.app/Contents/MacOS/ProxyBar` renders the panel once and prints parsed quota, for debugging.
+## Connect to your proxy
+
+ProxyBar uses CLIProxyAPI's management API, which is off until it has a key. In the proxy's `config.yaml`:
+
+```yaml
+remote-management:
+  secret-key: "pick-a-long-random-key"   # the proxy hashes this on its next start
+  allow-remote: false                    # true only if ProxyBar runs on another machine
+```
+
+Restart the proxy, then click the ProxyBar menu bar icon. On first run it shows a setup card:
+
+1. **Find local** looks for a proxy on this Mac (port 8317, plus any `port:` from a `config.yaml` in `~/.cli-proxy-api`, `~/.config/cliproxyapi` or Homebrew's `etc`). Or type the URL.
+2. Paste the key you chose above and click **Connect**. ProxyBar checks it against the proxy before saving anything.
+
+Change these later in settings (gear icon, ⌘,).
+
+A proxy on another machine must be reached over `https://` (for example behind a reverse proxy or `tailscale serve`), since the key is sent with every request. Plain `http://` is only accepted for `localhost`.
+
+## Security and privacy
+
+- **Tokens stay in the proxy.** Quota requests go through the proxy's `/v0/management/api-call`, which inserts each account's token server-side. ProxyBar never sees a provider credential.
+- **The management key** lives in your login Keychain (service `ProxyBar`, account `management-key`). It's written through `/usr/bin/security` on stdin, never on a command line.
+- **No retry storms.** CLIProxyAPI bans an address for ~30 minutes after 5 failed logins, so after a rejected key ProxyBar stops until you change the key or URL.
+- **The key is only sent to the configured host.** Redirects are refused, and responses aren't cached to disk.
+- **Emails are blurred** in the panel by default, so it's safe to screenshot. Click an address to show it until the panel closes; turn blurring off in settings.
+- **Local data**: usage history and the learned activity profile are kept in `~/Library/Application Support/ProxyBar`. Nothing is sent anywhere except your proxy (and, through it, the providers' usage endpoints).
+
+## Configuration
+
+| Setting | How |
+| --- | --- |
+| Proxy URL | Settings, or `defaults write dev.killian.proxybar proxyURL https://host:8317` |
+| Management key | Settings, or `security add-generic-password -U -s ProxyBar -a management-key -w` (prompts for it) |
+| Overrides for one run | `PROXYBAR_URL`, `PROXYBAR_MANAGEMENT_KEY` environment variables |
+
+ProxyBar refreshes every 5 minutes and whenever the panel opens, and honors `Retry-After` from the providers' usage APIs.
+
+## Debugging
+
+```sh
+PROXYBAR_SNAPSHOT=/tmp/panel.png ~/Applications/ProxyBar.app/Contents/MacOS/ProxyBar
+```
+
+renders the panel once to a PNG and prints the parsed quota (including account emails) to stdout. Add `PROXYBAR_SETTINGS=1` for the settings view or `PROXYBAR_APPEARANCE=dark|light`. Run it from the app bundle: macOS grants network access per app, so a bare `.build/debug/ProxyBar` may not reach a proxy on your network.
 
 ## Adding a provider
 
-Implement `QuotaProvider` in `Providers.swift` (request URL/headers using `$TOKEN$`, and a parser) and add it to `QuotaProviders.all`.
+Implement `QuotaProvider` in `Providers.swift` (the request URL and headers, using `$TOKEN$` where the proxy should insert the account's token, plus a parser) and add it to `QuotaProviders.all`.
+
+## License
+
+MIT

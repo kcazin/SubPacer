@@ -8,16 +8,26 @@ struct ManagementClient: Sendable {
 
     enum ClientError: LocalizedError {
         case unreachable(String)
-        case unauthorized
+        case unauthorized(String?)
+        case remoteDisabled
         case disabled
-        case http(Int)
+        case http(Int, String?)
 
         var errorDescription: String? {
             switch self {
             case .unreachable(let detail): "Proxy not reachable (\(detail))"
-            case .unauthorized: "Management key rejected"
-            case .disabled: "Management API disabled (no secret-key in proxy config)"
-            case .http(let code): "Proxy returned HTTP \(code)"
+            case .unauthorized(let detail): "Management key rejected\(detail.map { " (\($0))" } ?? ""). Paused until the key changes: the proxy bans an address after 5 failed attempts."
+            case .remoteDisabled: "Remote management is off. Set `remote-management.allow-remote: true` in the proxy's config.yaml, or run ProxyBar on the proxy's machine."
+            case .disabled: "Management API is off. Set `remote-management.secret-key` in the proxy's config.yaml and restart it."
+            case .http(let code, let detail): "Proxy returned HTTP \(code)\(detail.map { ": \($0)" } ?? "")"
+            }
+        }
+
+        /// Errors that retrying with the same settings won't fix, and that count toward the proxy's ban.
+        var needsSetup: Bool {
+            switch self {
+            case .unauthorized, .remoteDisabled, .disabled: true
+            case .unreachable, .http: false
             }
         }
     }
@@ -49,37 +59,36 @@ struct ManagementClient: Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await Self.session.data(for: request)
         } catch {
             throw ClientError.unreachable(error.localizedDescription)
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let message = (try? JSONDecoder().decode(ErrorBody.self, from: data))?.error
         switch status {
         case 200..<300: return data
-        case 401: throw ClientError.unauthorized
+        case 401: throw ClientError.unauthorized(message)
+        case 403 where message?.contains("remote management disabled") == true: throw ClientError.remoteDisabled
         case 404: throw ClientError.disabled
-        default: throw ClientError.http(status)
+        default: throw ClientError.http(status, message)
         }
     }
 
-    /// Reads the management key from the login Keychain via `security`, which avoids
-    /// re-prompting for Keychain access every time the ad-hoc signed app is rebuilt.
-    static func loadKey() -> String? {
-        if let env = ProcessInfo.processInfo.environment["PROXYBAR_MANAGEMENT_KEY"], !env.isEmpty {
-            return env
+    private struct ErrorBody: Decodable { let error: String }
+
+    /// Ephemeral, so responses (which carry account emails) never land in the on-disk URL cache,
+    /// and redirects are refused so the management key is only ever sent to the configured host.
+    private static let session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.httpCookieStorage = nil
+        return URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
+    }()
+
+    private final class NoRedirects: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest) async -> URLRequest? {
+            nil
         }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = ["find-generic-password", "-s", "ProxyBar", "-a", "management-key", "-w"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        let key = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        return key.isEmpty ? nil : key
     }
 }
 

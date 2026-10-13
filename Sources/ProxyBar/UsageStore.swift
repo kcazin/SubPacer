@@ -66,12 +66,14 @@ final class UsageStore {
     /// Updated every minute for time-based UI that lives outside a TimelineView.
     private(set) var clock = Date()
 
-    let baseURL: URL = {
-        let configured = UserDefaults.standard.string(forKey: "proxyURL") ?? "http://127.0.0.1:8317"
-        return URL(string: configured) ?? URL(string: "http://127.0.0.1:8317")!
-    }()
+    private(set) var baseURL = Connection.defaultURL
+    /// The proxy can't be used as configured (no key, key rejected, management off); the panel shows setup.
+    private(set) var needsSetup = false
 
-    private var key: String?
+    /// Settings that failed in a way retrying won't fix. Not retried until the URL or key changes,
+    /// because the proxy bans an address after 5 failed logins.
+    private var paused: (url: URL, key: String)?
+
     private var loop: Task<Void, Never>?
     private var ticker: Task<Void, Never>?
     private let interval: Duration = .seconds(300)
@@ -103,20 +105,30 @@ final class UsageStore {
         isRefreshing = true
         defer { isRefreshing = false }
 
-        if key == nil { key = ManagementClient.loadKey() }
-        guard let key else {
-            proxyError = "No management key in Keychain (service “ProxyBar”, account “management-key”)."
+        let url: URL
+        do {
+            url = try Connection.proxyURL()
+        } catch {
+            fail(error.localizedDescription, needsSetup: true)
             return
         }
-        let client = ManagementClient(baseURL: baseURL, key: key)
+        baseURL = url
+        guard let key = Connection.loadKey() else {
+            fail("Add the proxy's management key to connect.", needsSetup: true)
+            return
+        }
+        if let paused, paused.url == url, paused.key == key { return }
+        let client = ManagementClient(baseURL: url, key: key)
 
         let files: [AuthFile]
         do {
             files = try await client.authFiles()
             proxyError = nil
+            needsSetup = false
         } catch {
-            proxyError = error.localizedDescription
-            if case ManagementClient.ClientError.unauthorized = error { self.key = nil }
+            let setup = (error as? ManagementClient.ClientError)?.needsSetup ?? false
+            if setup { paused = (url, key) }
+            fail(error.localizedDescription, needsSetup: setup)
             return
         }
 
@@ -197,6 +209,41 @@ final class UsageStore {
         }
         accounts = merged
         lastUpdated = Date()
+    }
+
+    /// Checks the settings against the proxy and saves them only if they work.
+    /// An empty `key` keeps the one already in the Keychain.
+    func connect(urlText: String, key newKey: String) async throws {
+        let url = try Connection.parse(urlText)
+        let key = newKey.isEmpty ? Connection.loadKey() : newKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let key, !key.isEmpty else { throw SetupError.noKey }
+        _ = try await ManagementClient(baseURL: url, key: key).authFiles()
+        if !newKey.isEmpty, !Connection.saveKey(key) { throw SetupError.keychain }
+        Connection.saveProxyURL(url)
+        paused = nil
+        if url != baseURL {
+            // Another proxy means other accounts; drop what belonged to the old one.
+            accounts = []
+            runways = []
+            lastGood = [:]
+            backoffUntil = [:]
+        }
+        await refresh()
+    }
+
+    enum SetupError: LocalizedError {
+        case noKey, keychain
+        var errorDescription: String? {
+            switch self {
+            case .noKey: "Enter the management key (`remote-management.secret-key` in the proxy's config.yaml)."
+            case .keychain: "Couldn't save the key to the Keychain."
+            }
+        }
+    }
+
+    private func fail(_ message: String, needsSetup: Bool) {
+        proxyError = message
+        self.needsSetup = needsSetup
     }
 
     private let history = UsageHistory()
