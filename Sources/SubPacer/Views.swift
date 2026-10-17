@@ -813,9 +813,72 @@ struct SettingsCard: View {
                     .toggleStyle(.switch)
                     .controlSize(.mini)
             }
+            Divider()
+            UpdatesSection()
         }
         .padding(12)
         .glassEffect(.regular, in: .rect(cornerRadius: 16))
+    }
+}
+
+struct UpdatesSection: View {
+    @AppStorage(Updater.autoInstallKey) private var autoInstall = true
+    private let updater = Updater.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Updates")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                action
+            }
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Install automatically").font(.system(size: 11, weight: .medium))
+                    Text(.init(status))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Toggle("Install automatically", isOn: $autoInstall)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .disabled(updater.isDevelopmentBuild)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var action: some View {
+        switch updater.state {
+        case .checking, .installing:
+            ProgressView().controlSize(.mini)
+        case .available(let release):
+            Button("Install \(release.version)") { Task { await updater.install(release) } }
+                .buttonStyle(.glassProminent)
+                .controlSize(.small)
+        default:
+            Button("Check now") { Task { await updater.check(install: false) } }
+                .buttonStyle(.glass)
+                .controlSize(.small)
+                .disabled(updater.isDevelopmentBuild)
+        }
+    }
+
+    private var status: String {
+        let version = "Version \(updater.currentVersion)"
+        if updater.isDevelopmentBuild { return "\(version). Local builds update through `./build.sh`." }
+        switch updater.state {
+        case .idle: return "\(version). Checks GitHub every few hours."
+        case .checking: return "\(version). Checking…"
+        case .upToDate: return "\(version) is the latest."
+        case .available(let release): return "\(release.version) is out. [What's new](\(release.notes.absoluteString))"
+        case .installing(let next): return "Installing \(next). SubPacer will restart."
+        case .failed(let error): return "Update failed: \(error)"
+        }
     }
 }
 

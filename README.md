@@ -34,6 +34,10 @@ The app isn't notarized, so macOS blocks it the first time. Either open it once,
 xattr -dr com.apple.quarantine /Applications/SubPacer.app
 ```
 
+### Updates
+
+SubPacer checks this repository's latest release shortly after launch and every few hours. When there's a newer one it downloads the zip, checks it against the SHA-256 GitHub publishes for it, replaces the app where it is and restarts. Turn off **Install automatically** in settings to be asked first; **Check now** looks right away. The app's folder must be writable by you (`/Applications` is for admin accounts, `~/Applications` always is). Builds from `./build.sh` are versioned `0.0.0-dev` and never update themselves.
+
 ### Build from source
 
 Needs Swift 6.2 (Xcode 26 or its command line tools).

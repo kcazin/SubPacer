@@ -14,6 +14,7 @@ struct SubPacerApp: App {
             return
         }
         UsageStore.shared.start()
+        if !Demo.isActive { Updater.shared.start() }
     }
 
     var body: some Scene {
