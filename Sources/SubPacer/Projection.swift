@@ -3,6 +3,8 @@ import Foundation
 struct UsageSample: Codable, Sendable {
     let date: Date
     let used: Double
+    /// Length of the window the reading came from (absent in older history).
+    var length: TimeInterval?
 }
 
 /// Rolling record of quota readings, persisted so projections survive restarts.
@@ -23,9 +25,12 @@ final class UsageHistory {
 
     static func key(account: String, window: String) -> String { "\(account)|\(window)" }
 
-    func record(_ used: Double, key: String, at date: Date) {
+    func record(_ used: Double, length: TimeInterval?, key: String, at date: Date) {
         var samples = series[key] ?? []
-        samples.append(UsageSample(date: date, used: used))
+        // Providers sometimes change what a limit measures (Codex's primary window went from
+        // five hours to a week); readings of the old limit would skew every rate.
+        if let length, let previous = samples.last?.length, previous != length { samples = [] }
+        samples.append(UsageSample(date: date, used: used, length: length))
         samples.removeAll { $0.date < date.addingTimeInterval(-retention) }
         series[key] = samples
     }

@@ -169,7 +169,7 @@ final class UsageStore {
             let account = merged[index]
             for window in account.snapshot.windows {
                 let key = UsageHistory.key(account: account.id, window: window.id)
-                if account.error == nil { history.record(window.usedPercent, key: key, at: recordedAt) }
+                if account.error == nil { history.record(window.usedPercent, length: window.windowLength, key: key, at: recordedAt) }
                 // Long windows follow your activity pattern; the 5-hour window follows recent pace.
                 merged[index].projections[window.id] = (window.windowLength ?? 0) >= 86_400
                     ? ActivityForecast.projection(for: window, profile: profile, now: recordedAt)
