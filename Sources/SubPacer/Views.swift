@@ -759,6 +759,7 @@ struct SettingsCard: View {
     let store: UsageStore
     @AppStorage("menuBarStyle") private var style = MenuBarStyle.forecast
     @AppStorage("menuBarColor") private var colored = true
+    @AppStorage(MenuBarStyle.compactKey) private var compact = true
     @AppStorage(Privacy.blurKey) private var blurEmails = true
     @Environment(\.colorScheme) private var colorScheme
 
@@ -780,7 +781,7 @@ struct SettingsCard: View {
                     ForEach(MenuBarStyle.allCases) { option in
                         StyleTile(
                             style: option,
-                            image: MenuBarRenderer.image(store: store, style: option, colored: colored, colorScheme: colorScheme, now: context.date),
+                            image: MenuBarRenderer.image(store: store, style: option, colored: colored, compact: compact, colorScheme: colorScheme, now: context.date),
                             selected: option == style
                         )
                         .onTapGesture { style = option }
@@ -791,6 +792,19 @@ struct SettingsCard: View {
                 .font(.system(size: 10.5))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Compact with 2+ providers").font(.system(size: 11, weight: .medium))
+                    Text("Just the graphic for each provider, without the text beside it.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("Compact with 2+ providers", isOn: $compact)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+            }
             Divider()
             VStack(alignment: .leading, spacing: 6) {
                 Text("Panel")

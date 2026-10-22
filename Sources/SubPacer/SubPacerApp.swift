@@ -33,13 +33,14 @@ struct MenuBarLabel: View {
     let store: UsageStore
     @AppStorage("menuBarStyle") private var style = MenuBarStyle.forecast
     @AppStorage("menuBarColor") private var colored = true
+    @AppStorage(MenuBarStyle.compactKey) private var compact = true
     /// The menu bar's own appearance, which follows the wallpaper rather than the system theme.
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         // `clock` ticks every minute so reset countdowns stay current between refreshes.
         // (A TimelineView inside a MenuBarExtra label causes a layout loop.)
-        if let image = MenuBarRenderer.image(store: store, style: style, colored: colored, colorScheme: colorScheme, now: store.clock) {
+        if let image = MenuBarRenderer.image(store: store, style: style, colored: colored, compact: compact, colorScheme: colorScheme, now: store.clock) {
             Image(nsImage: image)
         } else {
             Image(systemName: store.proxyError == nil ? "gauge.with.dots.needle.33percent" : "exclamationmark.triangle")
@@ -52,12 +53,15 @@ struct MenuBarLabel: View {
 /// The settings previews use the same image, so they show exactly what the menu bar will.
 enum MenuBarRenderer {
     @MainActor
-    static func image(store: UsageStore, style: MenuBarStyle, colored: Bool, colorScheme: ColorScheme, now: Date) -> NSImage? {
+    static func image(store: UsageStore, style: MenuBarStyle, colored: Bool, compact: Bool, colorScheme: ColorScheme, now: Date) -> NSImage? {
         guard !store.accounts.isEmpty else { return nil }
         let foreground: Color = colored && colorScheme == .dark ? .white : .black
-        let content = HStack(spacing: 8) {
-            ForEach(store.menuBarItems(now: now)) { item in
-                MenuBarItemView(item: item, style: style, colored: colored, foreground: foreground)
+        let items = store.menuBarItems(now: now)
+        // A single provider has the room to show everything.
+        let compact = compact && items.count > 1
+        let content = HStack(spacing: compact ? 6 : 8) {
+            ForEach(items) { item in
+                MenuBarItemView(item: item, style: style, colored: colored, foreground: foreground, compact: compact)
             }
             // A limit reset should be spent now: the pool is out with plenty of the week left.
             if store.accounts.contains(where: { $0.resetAdvice?.action == .useNow }) {

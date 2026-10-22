@@ -47,6 +47,17 @@ enum MenuBarStyle: String, CaseIterable, Identifiable {
         case .ring, .sessionWeekly, .perAccount, .battery, .percent: false
         }
     }
+
+    /// Styles whose reading is all text, so compact mode keeps it.
+    var isTextOnly: Bool {
+        switch self {
+        case .headroom, .checkmark, .percent: true
+        default: false
+        }
+    }
+
+    /// With several providers, compact mode drops the text beside each graphic and narrows the wide ones.
+    static let compactKey = "menuBarCompact"
 }
 
 /// Everything the menu bar shows for one provider, with its accounts pooled.
@@ -135,11 +146,13 @@ extension UsageStore {
 
 /// One provider in a given style. `foreground` is the menu bar's text color; with `colored`
 /// the graphic takes the severity color, otherwise everything is drawn in `foreground`.
+/// `compact` keeps only the graphic (and an hourglass while used up) to save room for other providers.
 struct MenuBarItemView: View {
     let item: MenuBarItem
     let style: MenuBarStyle
     let colored: Bool
     let foreground: Color
+    var compact = false
 
     private var ink: GlyphInk {
         GlyphInk(base: foreground, accent: colored ? item.severity.color : foreground, alert: colored ? Severity.critical.color : foreground)
@@ -147,6 +160,9 @@ struct MenuBarItemView: View {
 
     /// Styles that need a projection fall back to remaining % until there is one.
     private var fallback: Bool { style.needsRunway && item.runway == nil }
+
+    /// Compact mode only applies where a graphic still carries the reading without its text.
+    private var graphicOnly: Bool { compact && !fallback && !style.isTextOnly }
 
     var body: some View {
         HStack(spacing: 3) {
@@ -173,7 +189,7 @@ struct MenuBarItemView: View {
         switch style {
         case .forecast:
             if let runway = item.runway {
-                ForecastGraph(runway: runway, ink: ink).frame(width: 36, height: 15).padding(.leading, 1)
+                ForecastGraph(runway: runway, ink: ink).frame(width: compact ? 24 : 36, height: 15).padding(.leading, 1)
             }
         case .sessionWeekly:
             LevelBars(values: [item.sessionLeft ?? 0, item.weeklyLeft], ink: ink)
@@ -181,13 +197,13 @@ struct MenuBarItemView: View {
             LevelBars(values: item.accountsLeft, ink: ink)
         case .runway:
             if let runway = item.runway {
-                MiniRunway(runway: runway, ink: ink).frame(width: 30, height: 15).padding(.leading, 1)
+                MiniRunway(runway: runway, ink: ink).frame(width: compact ? 20 : 30, height: 15).padding(.leading, 1)
             }
         case .battery:
             BatteryGlyph(fraction: item.weeklyLeft, resetSoon: item.resetSoon, ink: ink).frame(width: 27, height: 15)
         case .daily:
             if let runway = item.runway {
-                DailyBars(runway: runway, ink: ink)
+                DailyBars(runway: runway, ink: ink, barWidth: compact ? 2.5 : 3.5)
             }
         case .gauge:
             PaceGauge(headroom: item.runway?.headroom, ink: ink).frame(width: 20, height: 15)
@@ -198,6 +214,17 @@ struct MenuBarItemView: View {
 
     @ViewBuilder
     private var trailing: some View {
+        if graphicOnly {
+            if case .wait = item.tail {
+                Image(systemName: "hourglass").font(.system(size: 11, weight: .bold))
+            }
+        } else {
+            fullTrailing
+        }
+    }
+
+    @ViewBuilder
+    private var fullTrailing: some View {
         switch item.tail {
         case .wait(let countdown):
             Image(systemName: "hourglass").font(.system(size: 11, weight: .bold))
@@ -367,6 +394,7 @@ struct BatteryGlyph: View {
 struct DailyBars: View {
     let runway: Runway
     let ink: GlyphInk
+    var barWidth = 3.5
 
     private var values: [Double] {
         let calendar = Calendar.current
@@ -383,15 +411,15 @@ struct DailyBars: View {
     var body: some View {
         let values = values
         let ceiling = max(0.5, values.max() ?? 0)
-        HStack(alignment: .bottom, spacing: 1.5) {
+        HStack(alignment: .bottom, spacing: barWidth < 3 ? 1 : 1.5) {
             ForEach(values.indices, id: \.self) { index in
                 if values[index] > 0.005 {
                     RoundedRectangle(cornerRadius: 1).fill(ink.accent)
-                        .frame(width: 3.5, height: max(15 * values[index] / ceiling, 1.5))
+                        .frame(width: barWidth, height: max(15 * values[index] / ceiling, 1.5))
                 } else {
                     RoundedRectangle(cornerRadius: 0.6).stroke(ink.alert, lineWidth: 1)
                         .frame(width: 2.5, height: 2.5)
-                        .frame(width: 3.5)
+                        .frame(width: barWidth)
                 }
             }
         }

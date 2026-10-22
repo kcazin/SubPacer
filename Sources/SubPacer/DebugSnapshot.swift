@@ -67,7 +67,8 @@ enum DebugSnapshot {
     @MainActor
     private static func writeMenuBar(store: UsageStore, dark: Bool, to path: String) {
         let style = UserDefaults.standard.string(forKey: "menuBarStyle").flatMap(MenuBarStyle.init(rawValue:)) ?? .forecast
-        guard let image = MenuBarRenderer.image(store: store, style: style, colored: true, colorScheme: dark ? .dark : .light, now: Date()) else { return }
+        let compact = UserDefaults.standard.object(forKey: MenuBarStyle.compactKey) == nil || UserDefaults.standard.bool(forKey: MenuBarStyle.compactKey)
+        guard let image = MenuBarRenderer.image(store: store, style: style, colored: true, compact: compact, colorScheme: dark ? .dark : .light, now: Date()) else { return }
         let size = NSSize(width: image.size.width + 24, height: 26)
         guard let bitmap = NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2), pixelsHigh: Int(size.height * 2), bitsPerSample: 8,
