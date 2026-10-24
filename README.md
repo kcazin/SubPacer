@@ -1,118 +1,94 @@
-# SubPacer
-
-Pace your Claude and Codex subscription limits. A macOS menu bar app that shows the quota of every account in your [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) and forecasts whether your pace makes it to the next reset.
+<h1 align="center">SubPacer</h1>
 
 <p align="center">
-  <img src="docs/screenshots/menubar.png" alt="SubPacer in the menu bar: a forecast graph per provider and when the Claude pool runs out" height="26">
+  <b>Will your Claude and Codex limits last the week?</b><br>
+  A macOS menu bar app that shows the quota left on every account in your
+  <a href="https://github.com/router-for-me/CLIProxyAPI">CLIProxyAPI</a><br>
+  and tells you, before it happens, whether your pace runs out first.
 </p>
+
 <p align="center">
-  <img src="docs/screenshots/panel-light.png" alt="The SubPacer panel in light mode" width="340">
-  <img src="docs/screenshots/panel-dark.png" alt="The SubPacer panel in dark mode" width="340">
+  <a href="https://github.com/kcazin/SubPacer/releases/latest"><b>Download for macOS</b></a>
+  &nbsp;·&nbsp; macOS 26 or later &nbsp;·&nbsp; free and open source
 </p>
 
-- **Per-account quota**: session and weekly limits, when they reset, and whether your current pace runs out first.
-- **Runway**: pools each provider's accounts (the proxy fails over between them) and simulates forward to the last weekly reset, following your activity pattern and letting limits refill as they reset. Shows whether you ever run out, when, and how much faster or slower you could go.
-- **Menu bar**: twelve styles, from a forecast graph to a plain percentage, previewed live with your numbers.
-- **Quiet hours**: learns when you use the proxy and shows how much weekly quota will expire unused each night.
-- **Limit resets**: shows one-off Claude limit-reset grants and when spending one buys the most.
-- **Private by default**: account emails are blurred until you click them.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero-dark.png">
+    <img src="docs/images/hero-light.png" width="540" alt="SubPacer in the menu bar, a forecast graph per provider, with its panel open: the runway of Claude and Codex and the first account's limits">
+  </picture>
+</p>
 
-> **Unofficial.** Quota comes from the providers' own, undocumented usage endpoints (the ones their CLIs use). They can change or disappear without notice. Not affiliated with Anthropic, OpenAI or the CLIProxyAPI project.
+## Know where you'll run out
 
-## Requirements
+The Runway pools each provider's accounts, the way the proxy fails over between them, and plays your week forward:
+it follows the hours you usually work, and lets each limit refill as it resets. It shows whether you ever run out,
+when, when you're back, and how much faster or slower you could go.
 
-- macOS 26 or later, Apple silicon or Intel
-- A running CLIProxyAPI with Claude and/or Codex accounts signed in
+<p align="center">
+  <img src="docs/images/runway.png" width="328" alt="Runway: Claude's two pooled accounts run out Monday 12:50 and are back at 17:20, slow to 0.9× to last; Codex never runs out">
+</p>
+
+## Every account at a glance
+
+Each account shows its 5-hour session and weekly limit, when they reset, and whether you'll reach the reset at your
+current pace or by how much you'd fall short. A one-off Claude limit reset shows up too, with when spending it buys
+the most.
+
+<p align="center">
+  <img src="docs/images/account.png" width="328" alt="An account card: session 54% left, lasts with 20% spare; weekly 29% left, runs out Sunday; a limit reset available, best held for now">
+</p>
+
+## Your menu bar, your way
+
+Twelve styles, from the forecast graph to a plain percentage, each previewed in settings with your own numbers.
+With both providers, a compact mode keeps just the graphics.
+
+<p align="center">
+  <img src="docs/images/menubar-styles.png" width="654" alt="The twelve menu bar styles: forecast graph, ring, ring and headroom, session and weekly bars, per account, mini runway, battery, day by day, pace gauge, headroom, checkmark, remaining percent">
+</p>
+
+## Quiet hours, counted
+
+SubPacer learns when you use the proxy and works out, for tonight, how much of each account's weekly quota you'd
+never get to use before it resets. A good time to queue up a long job.
+
+<p align="center">
+  <img src="docs/images/tonight.png" width="328" alt="Tonight, 01:00 to 09:00, learned from your activity: each account is on pace to use its whole week">
+</p>
 
 ## Install
 
-Download `SubPacer-<version>.zip` from [Releases](https://github.com/kcazin/SubPacer/releases), unzip it and move `SubPacer.app` to Applications.
+1. [Download the latest zip](https://github.com/kcazin/SubPacer/releases/latest), unzip it and move SubPacer to
+   Applications. It isn't notarized yet: open it once, then click **Open Anyway** in System Settings → Privacy &
+   Security.
+2. Give the proxy a management key, in its `config.yaml`, and restart it:
 
-The app isn't notarized, so macOS blocks it the first time. Either open it once, then click **Open Anyway** in System Settings → Privacy & Security, or clear the download flag:
+   ```yaml
+   remote-management:
+     secret-key: "pick-a-long-random-key"
+   ```
 
-```sh
-xattr -dr com.apple.quarantine /Applications/SubPacer.app
-```
+3. Click SubPacer in the menu bar. **Find local** finds a proxy on this Mac (or type its URL); paste the key and
+   **Connect**.
 
-### Updates
+SubPacer updates itself from this repository's releases. A proxy on another machine, the settings and what's
+stored where: [Connecting to your proxy](docs/PROXY.md).
 
-SubPacer checks this repository's latest release shortly after launch and every few hours. When there's a newer one it downloads the zip, checks it against the SHA-256 GitHub publishes for it, replaces the app where it is and restarts. Turn off **Install automatically** in settings to be asked first; **Check now** looks right away. The app's folder must be writable by you (`/Applications` is for admin accounts, `~/Applications` always is). Builds from `./build.sh` are versioned `0.0.0-dev` and never update themselves.
+No proxy at hand? `SUBPACER_DEMO=1 /Applications/SubPacer.app/Contents/MacOS/SubPacer` runs it on made-up accounts.
 
-### Build from source
+## Your tokens stay in the proxy
 
-Needs Swift 6.2 (Xcode 26 or its command line tools).
+SubPacer asks the proxy to call the providers' usage endpoints, and the proxy fills in each account's token: the app
+never sees a provider credential. The management key is kept in your Keychain and only sent to your proxy. Emails are
+blurred until you click them, so the panel is safe to screenshot. Nothing leaves your Mac except to your proxy, and
+to GitHub to check for updates.
 
-```sh
-git clone https://github.com/kcazin/SubPacer.git
-cd SubPacer
-./build.sh                    # builds for this Mac, signs ad hoc, installs ~/Applications/SubPacer.app
-open ~/Applications/SubPacer.app
-```
+> **Unofficial.** Quota comes from the same undocumented usage endpoints the providers' own CLIs use, which can change
+> without notice. Not affiliated with Anthropic, OpenAI or the CLIProxyAPI project.
 
-`./build.sh --release 0.1.0` builds the universal app and zip in `dist/` instead.
+## For developers
 
-### Try it without a proxy
+Building from source, releases, the debug snapshots and adding a provider: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-```sh
-SUBPACER_DEMO=1 /Applications/SubPacer.app/Contents/MacOS/SubPacer
-```
-
-runs on made-up accounts (two Claude, one Codex) with a week of synthetic history. Nothing is saved.
-
-## Connect to your proxy
-
-SubPacer uses CLIProxyAPI's management API, which is off until it has a key. In the proxy's `config.yaml`:
-
-```yaml
-remote-management:
-  secret-key: "pick-a-long-random-key"   # the proxy hashes this on its next start
-  allow-remote: false                    # true only if SubPacer runs on another machine
-```
-
-Restart the proxy, then click the SubPacer menu bar icon. On first run it shows a setup card:
-
-1. **Find local** looks for a proxy on this Mac (port 8317, plus any `port:` from a `config.yaml` in `~/.cli-proxy-api`, `~/.config/cliproxyapi` or Homebrew's `etc`). Or type the URL.
-2. Paste the key you chose above and click **Connect**. SubPacer checks it against the proxy before saving anything.
-
-Change these later in settings (gear icon, ⌘,), which is also where you pick the menu bar style and which sections the panel shows:
-
-<p align="center">
-  <img src="docs/screenshots/settings.png" alt="Settings: proxy connection, menu bar styles previewed with live numbers, panel sections, email blurring" width="340">
-</p>
-
-A proxy on another machine must be reached over `https://` (for example behind a reverse proxy or `tailscale serve`), since the key is sent with every request. Plain `http://` is only accepted for `localhost`.
-
-## Security and privacy
-
-- **Tokens stay in the proxy.** Quota requests go through the proxy's `/v0/management/api-call`, which inserts each account's token server-side. SubPacer never sees a provider credential.
-- **The management key** lives in your login Keychain (service `SubPacer`, account `management-key`). It's written through `/usr/bin/security` on stdin, never on a command line.
-- **No retry storms.** CLIProxyAPI bans an address for ~30 minutes after 5 failed logins, so after a rejected key SubPacer stops until you change the key or URL.
-- **The key is only sent to the configured host.** Redirects are refused, and responses aren't cached to disk.
-- **Emails are blurred** in the panel by default, so it's safe to screenshot. Click an address to show it until the panel closes; turn blurring off in settings.
-- **Local data**: usage history and the learned activity profile are kept in `~/Library/Application Support/SubPacer`. Nothing is sent anywhere except your proxy (and, through it, the providers' usage endpoints).
-
-## Configuration
-
-| Setting | How |
-| --- | --- |
-| Proxy URL | Settings, or `defaults write dev.killian.subpacer proxyURL https://host:8317` |
-| Management key | Settings, or `security add-generic-password -U -s SubPacer -a management-key -w` (prompts for it) |
-| Overrides for one run | `SUBPACER_URL`, `SUBPACER_MANAGEMENT_KEY` environment variables |
-
-SubPacer refreshes every 5 minutes and whenever the panel opens, and honors `Retry-After` from the providers' usage APIs.
-
-## Debugging
-
-```sh
-SUBPACER_SNAPSHOT=/tmp/panel.png ~/Applications/SubPacer.app/Contents/MacOS/SubPacer
-```
-
-renders the panel once to a PNG and prints the parsed quota (including account emails) to stdout. Add `SUBPACER_SETTINGS=1` for the settings view, `SUBPACER_APPEARANCE=dark|light`, `SUBPACER_MENUBAR=/tmp/menubar.png` to also save the menu bar label, or `SUBPACER_DEMO=1` for the demo accounts (that's how the screenshots above are made). Run it from the app bundle: macOS grants network access per app, so a bare `.build/debug/SubPacer` may not reach a proxy on your network.
-
-## Adding a provider
-
-Implement `QuotaProvider` in `Providers.swift` (the request URL and headers, using `$TOKEN$` where the proxy should insert the account's token, plus a parser) and add it to `QuotaProviders.all`.
-
-## License
-
-MIT
+MIT licensed: see [LICENSE](LICENSE).
