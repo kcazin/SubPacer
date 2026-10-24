@@ -36,7 +36,13 @@ enum DebugSnapshot {
             window.backgroundColor = .clear
             window.level = .floating
             window.contentView = background
-            window.center()
+            // On the sharpest screen, so the capture is 2x even with a 1x display attached.
+            if let screen = NSScreen.screens.max(by: { $0.backingScaleFactor < $1.backingScaleFactor }) {
+                let visible = screen.visibleFrame
+                window.setFrameOrigin(NSPoint(x: visible.midX - window.frame.width / 2, y: visible.midY - window.frame.height / 2))
+            } else {
+                window.center()
+            }
             window.orderFrontRegardless()
             try? await Task.sleep(for: .seconds(1.5))
 
