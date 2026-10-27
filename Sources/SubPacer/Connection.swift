@@ -19,6 +19,39 @@ enum Connection {
         UserDefaults.standard.set(url.absoluteString, forKey: "proxyURL")
     }
 
+    /// Where accounts come from: the proxy, the CLI logins on this Mac, or both.
+    enum Source: String, CaseIterable, Identifiable {
+        case both, local, proxy
+
+        static let storageKey = "accountSource"
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .both: "Both"
+            case .local: "This Mac"
+            case .proxy: "Proxy"
+            }
+        }
+
+        var summary: String {
+            switch self {
+            case .both: "The proxy's accounts, plus any Claude Code or Codex login on this Mac it doesn't have."
+            case .local: "Only the Claude Code and Codex logins on this Mac. The proxy isn't contacted."
+            case .proxy: "Only the proxy's accounts. Logins on this Mac are ignored."
+            }
+        }
+
+        var usesProxy: Bool { self != .local }
+        var usesLocal: Bool { self != .proxy }
+    }
+
+    static var source: Source {
+        if Demo.isActive { return .both }
+        return UserDefaults.standard.string(forKey: Source.storageKey).flatMap(Source.init) ?? .both
+    }
+
     enum URLError: LocalizedError {
         case invalid, scheme, insecure
 

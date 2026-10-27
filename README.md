@@ -76,7 +76,7 @@ SubPacer updates itself from this repository's releases. A proxy on another mach
 stored where: [Connecting to your proxy](docs/PROXY.md).
 
 **No proxy on this Mac?** Skip steps 2 and 3. SubPacer also reads the Claude Code and Codex logins on this Mac and
-shows those accounts on their own, or next to the proxy's.
+shows those accounts on their own, or next to the proxy's. **Accounts** in settings picks Both, This Mac or Proxy.
 
 No proxy at hand? `SUBPACER_DEMO=1 /Applications/SubPacer.app/Contents/MacOS/SubPacer` runs it on made-up accounts.
 

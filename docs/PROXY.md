@@ -30,7 +30,8 @@ the panel shows:
 
 SubPacer also reads the logins Claude Code and Codex keep on this Mac, so it works with no proxy at all, and shows
 any account the proxy doesn't have next to the proxy's (an account both have shows once, from the proxy). Those cards
-carry a laptop icon.
+carry a laptop icon. **Accounts** at the top of settings picks the source: **Both** (the default), **This Mac** (the
+proxy isn't contacted, even with a key saved) or **Proxy** (logins on this Mac are ignored).
 
 | CLI | Login read from | Account shown |
 | --- | --- | --- |
@@ -81,6 +82,7 @@ xattr -dr com.apple.quarantine /Applications/SubPacer.app
 
 | Setting | How |
 | --- | --- |
+| Account source | Settings, or `defaults write dev.killian.subpacer accountSource local` (`both`, `local`, `proxy`) |
 | Proxy URL | Settings, or `defaults write dev.killian.subpacer proxyURL https://host:8317` |
 | Management key | Settings, or `security add-generic-password -U -s SubPacer -a management-key -w` (prompts for it) |
 | Overrides for one run | `SUBPACER_URL`, `SUBPACER_MANAGEMENT_KEY` environment variables |

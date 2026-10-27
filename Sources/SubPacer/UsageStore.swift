@@ -110,8 +110,20 @@ final class UsageStore {
         isRefreshing = true
         defer { isRefreshing = false }
 
-        let logins = LocalLogins.load()
-        let proxy = await loadProxy(hasLocal: !logins.isEmpty)
+        let source = Connection.source
+        let logins = source.usesLocal ? LocalLogins.load() : []
+        let proxy: (client: ManagementClient, files: [AuthFile])?
+        if source.usesProxy {
+            proxy = await loadProxy(hasLocal: !logins.isEmpty)
+        } else {
+            proxy = nil
+            if logins.isEmpty {
+                fail("Sign in to Claude Code or Codex on this Mac.", needsSetup: true)
+            } else {
+                proxyError = nil
+                needsSetup = false
+            }
+        }
         // Nothing to refresh; keep what's shown, `proxyError` says why.
         if proxy == nil && logins.isEmpty { return }
 
@@ -123,7 +135,7 @@ final class UsageStore {
 
         let tracked = proxy?.files.filter { $0.disabled != true && $0.authIndex != nil && QuotaProviders.provider(for: $0.providerID) != nil } ?? []
         // While the proxy is down, its accounts stay as last seen.
-        let carried = proxy == nil ? accounts.filter { $0.source == .proxy } : []
+        let carried = proxy == nil && source.usesProxy ? accounts.filter { $0.source == .proxy } : []
         // A login the proxy also has shows once, with the proxy's stats.
         let proxied = Set(tracked.map { Self.identity($0.providerID, $0.email) } + carried.map { Self.identity($0.providerID, $0.email) })
         let local = logins.filter { !proxied.contains(Self.identity($0.providerID, $0.email)) }
@@ -226,6 +238,8 @@ final class UsageStore {
             if hasLocal {
                 proxyError = nil
                 needsSetup = false
+            } else if Connection.source == .proxy {
+                fail("Add the proxy's management key to connect.", needsSetup: true)
             } else {
                 fail("Sign in to Claude Code or Codex on this Mac, or add your proxy's management key.", needsSetup: true)
             }
@@ -247,6 +261,14 @@ final class UsageStore {
             fail(error.localizedDescription, needsSetup: setup && !hasLocal)
             return nil
         }
+    }
+
+    /// Starts over from the newly chosen source, so accounts it leaves out don't linger.
+    func sourceChanged() async {
+        accounts = []
+        runways = []
+        lastUpdated = nil
+        await refresh()
     }
 
     nonisolated private static func identity(_ providerID: String, _ email: String?) -> String {

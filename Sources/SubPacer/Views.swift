@@ -968,51 +968,35 @@ struct ConnectionCard: View {
     @State private var hasSavedKey = false
     @State private var working = false
     @State private var message: (text: String, isError: Bool)?
+    @AppStorage(Connection.Source.storageKey) private var source = Connection.Source.both
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: "point.3.connected.trianglepath.dotted")
+                Image(systemName: "person.2")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
-                Text("CLIProxyAPI")
+                Text("Accounts")
                     .font(.system(size: 12, weight: .semibold))
-                Spacer()
-                Button("Find local") { Task { await detect() } }
-                    .buttonStyle(.glass)
-                    .controlSize(.small)
-                    .disabled(working)
-                    .help("Look for a proxy on this Mac (port 8317 and any port in its config.yaml)")
+                    .fixedSize()
+                Spacer(minLength: 8)
+                Picker("Accounts", selection: $source) {
+                    ForEach(Connection.Source.allCases) { Text($0.title).tag($0) }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .controlSize(.small)
             }
+            Text(source.summary)
+                .font(.system(size: 10.5))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if store.needsSetup, message == nil, let error = store.proxyError {
                 Banner(text: error, symbol: "exclamationmark.triangle.fill", tint: Palette.warning)
             }
-            field("URL") {
-                TextField("http://127.0.0.1:8317", text: $urlText)
-                    .onSubmit { Task { await connect() } }
+            if source.usesProxy {
+                proxyFields
             }
-            field("Key") {
-                SecureField(hasSavedKey ? "Saved in Keychain" : "remote-management.secret-key", text: $key)
-                    .onSubmit { Task { await connect() } }
-            }
-            HStack(spacing: 6) {
-                if working {
-                    ProgressView().controlSize(.mini)
-                } else if let message {
-                    Image(systemName: message.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(message.isError ? Palette.critical : Palette.ok)
-                }
-                Text(.init(message?.text ?? "The key stays in your login Keychain."))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 4)
-                Button("Connect") { Task { await connect() } }
-                    .buttonStyle(.glassProminent)
-                    .controlSize(.small)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(working || urlText.trimmingCharacters(in: .whitespaces).isEmpty || (key.isEmpty && !hasSavedKey))
-            }
-            .font(.system(size: 10.5))
         }
         .padding(12)
         .glassEffect(.regular, in: .rect(cornerRadius: 16))
@@ -1020,6 +1004,54 @@ struct ConnectionCard: View {
             urlText = Connection.configuredURL ?? Connection.defaultURL.absoluteString
             hasSavedKey = Connection.loadKey() != nil
         }
+        .onChange(of: source) {
+            message = nil
+            Task { await store.sourceChanged() }
+        }
+    }
+
+    @ViewBuilder
+    private var proxyFields: some View {
+        Divider()
+        HStack(spacing: 6) {
+            Image(systemName: "point.3.connected.trianglepath.dotted")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text("CLIProxyAPI")
+                .font(.system(size: 12, weight: .semibold))
+            Spacer()
+            Button("Find local") { Task { await detect() } }
+                .buttonStyle(.glass)
+                .controlSize(.small)
+                .disabled(working)
+                .help("Look for a proxy on this Mac (port 8317 and any port in its config.yaml)")
+        }
+        field("URL") {
+            TextField("http://127.0.0.1:8317", text: $urlText)
+                .onSubmit { Task { await connect() } }
+        }
+        field("Key") {
+            SecureField(hasSavedKey ? "Saved in Keychain" : "remote-management.secret-key", text: $key)
+                .onSubmit { Task { await connect() } }
+        }
+        HStack(spacing: 6) {
+            if working {
+                ProgressView().controlSize(.mini)
+            } else if let message {
+                Image(systemName: message.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(message.isError ? Palette.critical : Palette.ok)
+            }
+            Text(.init(message?.text ?? "The key stays in your login Keychain."))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Button("Connect") { Task { await connect() } }
+                .buttonStyle(.glassProminent)
+                .controlSize(.small)
+                .keyboardShortcut(.defaultAction)
+                .disabled(working || urlText.trimmingCharacters(in: .whitespaces).isEmpty || (key.isEmpty && !hasSavedKey))
+        }
+        .font(.system(size: 10.5))
     }
 
     private func field(_ label: String, @ViewBuilder content: () -> some View) -> some View {
