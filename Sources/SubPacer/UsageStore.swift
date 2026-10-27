@@ -7,6 +7,11 @@ struct AccountUsage: Identifiable, Sendable {
     let email: String
     var snapshot = QuotaSnapshot()
     var error: String?
+    /// Why the numbers aren't fresh when nothing is wrong, e.g. a CLI that hasn't renewed its login yet.
+    var notice: String?
+    var source = Source.proxy
+
+    enum Source: Sendable { case proxy, local }
 
     // Proxy-side stats (secondary info).
     var proxyStatus: String?
@@ -105,44 +110,36 @@ final class UsageStore {
         isRefreshing = true
         defer { isRefreshing = false }
 
-        let url: URL
-        do {
-            url = try Connection.proxyURL()
-        } catch {
-            fail(error.localizedDescription, needsSetup: true)
-            return
-        }
-        baseURL = url
-        guard let key = Connection.loadKey() else {
-            fail("Add the proxy's management key to connect.", needsSetup: true)
-            return
-        }
-        if let paused, paused.url == url, paused.key == key { return }
-        let client = ManagementClient(baseURL: url, key: key)
+        let logins = LocalLogins.load()
+        let proxy = await loadProxy(hasLocal: !logins.isEmpty)
+        // Nothing to refresh; keep what's shown, `proxyError` says why.
+        if proxy == nil && logins.isEmpty { return }
 
-        let files: [AuthFile]
-        do {
-            files = try await client.authFiles()
-            proxyError = nil
-            needsSetup = false
-        } catch {
-            let setup = (error as? ManagementClient.ClientError)?.needsSetup ?? false
-            if setup { paused = (url, key) }
-            fail(error.localizedDescription, needsSetup: setup)
-            return
+        if let files = proxy?.files {
+            activity.record(files.filter { $0.disabled != true }.compactMap { $0.recentRequests?.map { $0.success + $0.failed } }, now: Date())
+            activity.save()
+            profile = ActivityProfile.build(from: activity.counts)
         }
 
-        activity.record(files.filter { $0.disabled != true }.compactMap { $0.recentRequests?.map { $0.success + $0.failed } }, now: Date())
-        activity.save()
-        profile = ActivityProfile.build(from: activity.counts)
+        let tracked = proxy?.files.filter { $0.disabled != true && $0.authIndex != nil && QuotaProviders.provider(for: $0.providerID) != nil } ?? []
+        // While the proxy is down, its accounts stay as last seen.
+        let carried = proxy == nil ? accounts.filter { $0.source == .proxy } : []
+        // A login the proxy also has shows once, with the proxy's stats.
+        let proxied = Set(tracked.map { Self.identity($0.providerID, $0.email) } + carried.map { Self.identity($0.providerID, $0.email) })
+        let local = logins.filter { !proxied.contains(Self.identity($0.providerID, $0.email)) }
 
-        let tracked = files.filter { $0.disabled != true && $0.authIndex != nil && QuotaProviders.provider(for: $0.providerID) != nil }
         let now = Date()
-        let backoff = backoffUntil
+        let backoff = backoffUntil.filter { $0.value > now }
         let fetched = await withTaskGroup(of: FetchResult.self) { group in
-            for file in tracked {
-                let skipUntil = file.authIndex.flatMap { backoff[$0] }.flatMap { $0 > now ? $0 : nil }
-                group.addTask { await Self.fetchUsage(file, client: client, skipUntil: skipUntil) }
+            if let client = proxy?.client {
+                for file in tracked {
+                    let skipUntil = file.authIndex.flatMap { backoff[$0] }
+                    group.addTask { await Self.fetchUsage(file, client: client, skipUntil: skipUntil) }
+                }
+            }
+            for login in local {
+                let skipUntil = backoff[login.id]
+                group.addTask { await Self.fetchUsage(login, skipUntil: skipUntil) }
             }
             var results: [FetchResult] = []
             for await result in group { results.append(result) }
@@ -155,21 +152,23 @@ final class UsageStore {
             if let retryAfter = result.retryAfter {
                 backoffUntil[usage.id] = Date().addingTimeInterval(retryAfter)
             }
-            if usage.error == nil {
+            if usage.error == nil && usage.notice == nil {
                 lastGood[usage.id] = usage.snapshot
             } else if let previous = lastGood[usage.id] {
-                // Keep showing the last known numbers; the error explains why they're stale.
+                // Keep showing the last known numbers; the error or notice explains why they're stale.
                 usage.snapshot = previous
             }
             merged.append(usage)
         }
+        merged += carried
+        let carriedIDs = Set(carried.map(\.id))
 
         let recordedAt = Date()
         for index in merged.indices {
             let account = merged[index]
             for window in account.snapshot.windows {
                 let key = UsageHistory.key(account: account.id, window: window.id)
-                if account.error == nil { history.record(window.usedPercent, length: window.windowLength, key: key, at: recordedAt) }
+                if account.error == nil && account.notice == nil && !carriedIDs.contains(account.id) { history.record(window.usedPercent, length: window.windowLength, key: key, at: recordedAt) }
                 // Long windows follow your activity pattern; the 5-hour window follows recent pace.
                 merged[index].projections[window.id] = (window.windowLength ?? 0) >= 86_400
                     ? ActivityForecast.projection(for: window, profile: profile, now: recordedAt)
@@ -211,6 +210,49 @@ final class UsageStore {
         lastUpdated = Date()
     }
 
+    /// The proxy's accounts, or nil when there's no proxy to use; sets `proxyError` and `needsSetup`.
+    /// With logins on this Mac to show, a proxy that needs setup doesn't take over the panel.
+    private func loadProxy(hasLocal: Bool) async -> (client: ManagementClient, files: [AuthFile])? {
+        let url: URL
+        do {
+            url = try Connection.proxyURL()
+        } catch {
+            fail(error.localizedDescription, needsSetup: !hasLocal)
+            return nil
+        }
+        baseURL = url
+        guard let key = Connection.loadKey() else {
+            // No key means no proxy here, which is fine when the CLIs are signed in.
+            if hasLocal {
+                proxyError = nil
+                needsSetup = false
+            } else {
+                fail("Sign in to Claude Code or Codex on this Mac, or add your proxy's management key.", needsSetup: true)
+            }
+            return nil
+        }
+        if let paused, paused.url == url, paused.key == key {
+            if hasLocal { needsSetup = false }
+            return nil
+        }
+        let client = ManagementClient(baseURL: url, key: key)
+        do {
+            let files = try await client.authFiles()
+            proxyError = nil
+            needsSetup = false
+            return (client, files)
+        } catch {
+            let setup = (error as? ManagementClient.ClientError)?.needsSetup ?? false
+            if setup { paused = (url, key) }
+            fail(error.localizedDescription, needsSetup: setup && !hasLocal)
+            return nil
+        }
+    }
+
+    nonisolated private static func identity(_ providerID: String, _ email: String?) -> String {
+        "\(providerID):\(email?.lowercased() ?? "")"
+    }
+
     /// Checks the settings against the proxy and saves them only if they work.
     /// An empty `key` keeps the one already in the Keychain.
     func connect(urlText: String, key newKey: String) async throws {
@@ -223,10 +265,10 @@ final class UsageStore {
         paused = nil
         if url != baseURL {
             // Another proxy means other accounts; drop what belonged to the old one.
-            accounts = []
+            accounts = accounts.filter { $0.source == .local }
             runways = []
-            lastGood = [:]
-            backoffUntil = [:]
+            lastGood = lastGood.filter { $0.key.hasPrefix("local.") }
+            backoffUntil = backoffUntil.filter { $0.key.hasPrefix("local.") }
         }
         await refresh()
     }
@@ -276,7 +318,7 @@ final class UsageStore {
             return FetchResult(usage: usage)
         }
 
-        let request = provider.request(for: file)
+        let request = provider.request(accountID: file.idToken?.chatgptAccountId)
         do {
             let response = try await client.apiCall(authIndex: authIndex, url: request.url, headers: request.headers)
             switch response.status {
@@ -285,6 +327,43 @@ final class UsageStore {
                 if usage.snapshot.plan == nil, let plan = file.idToken?.planType { usage.snapshot.plan = plan.capitalized }
             case 401, 403:
                 usage.error = "Login expired. \(provider.reloginHint)"
+            case 429:
+                let retryAfter = response.retryAfter ?? 600
+                usage.error = rateLimitMessage(provider, until: Date().addingTimeInterval(retryAfter))
+                return FetchResult(usage: usage, retryAfter: retryAfter)
+            default:
+                usage.error = "\(provider.displayName) returned HTTP \(response.status)"
+            }
+        } catch {
+            usage.error = error.localizedDescription
+        }
+        return FetchResult(usage: usage)
+    }
+
+    nonisolated private static func fetchUsage(_ login: LocalLogin, skipUntil: Date?) async -> FetchResult {
+        var usage = AccountUsage(id: login.id, providerID: login.providerID, email: login.email ?? login.cliName)
+        usage.source = .local
+        guard let provider = QuotaProviders.provider(for: login.providerID) else { return FetchResult(usage: usage) }
+        if let skipUntil {
+            usage.error = rateLimitMessage(provider, until: skipUntil)
+            return FetchResult(usage: usage)
+        }
+        // Not an error: the CLI renews it the next time it runs, and usage can't move until then.
+        let waiting = "\(login.cliName) renews its login the next time you use it; until then these are the last numbers seen."
+        if login.isExpired(at: Date()) {
+            usage.notice = waiting
+            return FetchResult(usage: usage)
+        }
+        do {
+            let response = try await LocalLogins.fetch(login, provider: provider)
+            switch response.status {
+            case 200..<300:
+                usage.snapshot = try provider.parse(response.body)
+                if usage.snapshot.plan == nil { usage.snapshot.plan = login.plan }
+            case 401 where login.expiresAt == nil:
+                usage.notice = waiting
+            case 401, 403:
+                usage.error = "\(login.cliName)'s login was rejected. Sign in to \(login.cliName) again."
             case 429:
                 let retryAfter = response.retryAfter ?? 600
                 usage.error = rateLimitMessage(provider, until: Date().addingTimeInterval(retryAfter))

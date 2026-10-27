@@ -86,7 +86,7 @@ struct ManagementClient: Sendable {
         return URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
     }()
 
-    private final class NoRedirects: NSObject, URLSessionTaskDelegate {
+    final class NoRedirects: NSObject, URLSessionTaskDelegate {
         func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest) async -> URLRequest? {
             nil
         }

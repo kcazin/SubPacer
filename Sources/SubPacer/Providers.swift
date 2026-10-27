@@ -39,13 +39,14 @@ struct ResetGrant: Identifiable, Hashable, Sendable {
     var isAvailable: Bool { resetsLeft > 0 && !paused }
 }
 
-/// Knows how to ask a provider for quota through the proxy and how to read the answer.
+/// Knows how to ask a provider for quota and how to read the answer. Requests carry `$TOKEN$`,
+/// which the proxy fills in server-side, or `LocalLogins` does for a login on this Mac.
 protocol QuotaProvider {
     static var id: String { get }
     static var displayName: String { get }
     static var symbol: String { get }
     static var tint: Color { get }
-    static func request(for auth: AuthFile) -> (url: String, headers: [String: String])
+    static func request(accountID: String?) -> (url: String, headers: [String: String])
     static func parse(_ data: Data) throws -> QuotaSnapshot
     static var reloginHint: String { get }
 }
@@ -71,7 +72,7 @@ enum ClaudeQuota: QuotaProvider {
     static let tint = Color(red: 0.85, green: 0.47, blue: 0.34)
     static let reloginHint = "Run `cliproxyapi -claude-login` to sign in again."
 
-    static func request(for auth: AuthFile) -> (url: String, headers: [String: String]) {
+    static func request(accountID: String?) -> (url: String, headers: [String: String]) {
         // `cedar_ember=1` adds limit-reset grants, which are only offered to a recent Claude Code.
         ("https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1", [
             "Authorization": "Bearer $TOKEN$",
@@ -154,14 +155,14 @@ enum CodexQuota: QuotaProvider {
     static let tint = Color(red: 0.25, green: 0.55, blue: 0.95)
     static let reloginHint = "Run `cliproxyapi -codex-login` to sign in again."
 
-    static func request(for auth: AuthFile) -> (url: String, headers: [String: String]) {
+    static func request(accountID: String?) -> (url: String, headers: [String: String]) {
         var headers = [
             "Authorization": "Bearer $TOKEN$",
             "Accept": "application/json",
             "User-Agent": "codex_cli_rs",
         ]
-        if let account = auth.idToken?.chatgptAccountId {
-            headers["ChatGPT-Account-Id"] = account
+        if let accountID {
+            headers["ChatGPT-Account-Id"] = accountID
         }
         return ("https://chatgpt.com/backend-api/wham/usage", headers)
     }

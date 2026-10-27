@@ -89,7 +89,7 @@ enum Connection {
     }
 
     @discardableResult
-    private static func runSecurity(_ arguments: [String], input: String? = nil) -> String? {
+    static func runSecurity(_ arguments: [String], input: String? = nil) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
         process.arguments = arguments

@@ -75,14 +75,18 @@ never get to use before it resets. A good time to queue up a long job.
 SubPacer updates itself from this repository's releases. A proxy on another machine, the settings and what's
 stored where: [Connecting to your proxy](docs/PROXY.md).
 
+**No proxy on this Mac?** Skip steps 2 and 3. SubPacer also reads the Claude Code and Codex logins on this Mac and
+shows those accounts on their own, or next to the proxy's.
+
 No proxy at hand? `SUBPACER_DEMO=1 /Applications/SubPacer.app/Contents/MacOS/SubPacer` runs it on made-up accounts.
 
-## Your tokens stay in the proxy
+## Your tokens stay where they are
 
 SubPacer asks the proxy to call the providers' usage endpoints, and the proxy fills in each account's token: the app
-never sees a provider credential. The management key is kept in your Keychain and only sent to your proxy. Emails are
-blurred until you click them, so the panel is safe to screenshot. Nothing leaves your Mac except to your proxy, and
-to GitHub to check for updates.
+never sees a proxy account's credential. For the Claude Code and Codex logins on this Mac, it reads the token the CLI
+already keeps and only sends it to that provider's usage endpoint; it never renews or stores it. The management key is kept in your Keychain and only sent to your proxy. Emails are
+blurred until you click them, so the panel is safe to screenshot. Nothing leaves your Mac except to your proxy, the
+providers' usage endpoints, and GitHub to check for updates.
 
 > **Unofficial.** Quota comes from the same undocumented usage endpoints the providers' own CLIs use, which can change
 > without notice. Not affiliated with Anthropic, OpenAI or the CLIProxyAPI project.

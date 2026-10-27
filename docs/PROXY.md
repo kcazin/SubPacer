@@ -26,6 +26,22 @@ the panel shows:
   <img src="images/settings.png" width="340" alt="Settings: proxy connection, menu bar styles previewed with live numbers, panel sections, email blurring, updates">
 </p>
 
+## Without a proxy
+
+SubPacer also reads the logins Claude Code and Codex keep on this Mac, so it works with no proxy at all, and shows
+any account the proxy doesn't have next to the proxy's (an account both have shows once, from the proxy). Those cards
+carry a laptop icon.
+
+| CLI | Login read from | Account shown |
+| --- | --- | --- |
+| Claude Code | Keychain item `Claude Code-credentials` (or `~/.claude/.credentials.json`) | `oauthAccount.emailAddress` in `~/.claude.json` |
+| Codex | `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`) | The email in its `id_token` |
+
+The tokens are only read. Renewing one would rotate it and sign the CLI out, so when a short-lived token expires
+(Claude Code's last about 8 hours) the card keeps the last numbers until the CLI renews it, which it does the next
+time you use it. The Tonight card learns your hours from proxy traffic, so without a proxy it keeps assuming
+23:00–08:00.
+
 ## A proxy on another machine
 
 It must be reached over `https://` (for example behind a reverse proxy or `tailscale serve`), since the key is sent
@@ -34,7 +50,9 @@ with every request. Plain `http://` is only accepted for `localhost`. Set `allow
 ## Security and privacy
 
 - **Tokens stay in the proxy.** Quota requests go through the proxy's `/v0/management/api-call`, which inserts each
-  account's token server-side. SubPacer never sees a provider credential.
+  account's token server-side. SubPacer never sees a proxy account's credential.
+- **CLI logins are only read.** The Claude Code and Codex tokens on this Mac are read on each refresh, sent only to
+  that provider's usage endpoint (redirects refused), and never written, renewed or kept.
 - **The management key** lives in your login Keychain (service `SubPacer`, account `management-key`). It's written
   through `/usr/bin/security` on stdin, never on a command line.
 - **No retry storms.** CLIProxyAPI bans an address for ~30 minutes after 5 failed logins, so after a rejected key

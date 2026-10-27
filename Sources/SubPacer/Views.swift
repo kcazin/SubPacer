@@ -122,7 +122,7 @@ struct UsagePanel: View {
         if showTonight && store.accounts.contains(where: { $0.offHours != nil }) {
             OffHoursCard(store: store)
         }
-        if showProxy && !store.accounts.isEmpty {
+        if showProxy && store.accounts.contains(where: { $0.source == .proxy }) {
             ProxySection(store: store)
         }
         if !store.accounts.isEmpty && !(showRunway || showAccounts || showTonight || showProxy) {
@@ -212,6 +212,8 @@ struct AccountCard: View {
 
             if let error = account.error {
                 Banner(text: error, symbol: "exclamationmark.circle.fill", tint: Palette.critical)
+            } else if let notice = account.notice {
+                Banner(text: notice, symbol: "clock", tint: .secondary)
             }
 
             if account.isBlocked {
@@ -273,6 +275,12 @@ struct AccountCard: View {
                 .font(.system(size: 12, weight: .semibold))
                 .lineLimit(1)
                 .truncationMode(.middle)
+            if account.source == .local {
+                Image(systemName: "laptopcomputer")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .help("Read from this Mac's \(account.providerID == ClaudeQuota.id ? "Claude Code" : "Codex") login, not the proxy")
+            }
             Spacer(minLength: 4)
             Text(account.snapshot.plan ?? account.displayName)
                 .font(.system(size: 10, weight: .medium))
@@ -1322,7 +1330,7 @@ struct ProxySection: View {
 
             if expanded {
                 VStack(spacing: 6) {
-                    ForEach(store.accounts) { account in
+                    ForEach(store.accounts.filter { $0.source == .proxy }) { account in
                         ProxyAccountRow(account: account)
                     }
                 }
