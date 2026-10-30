@@ -48,6 +48,13 @@ With both providers, a compact mode keeps just the graphics.
   <img src="docs/images/menubar-styles.png" width="654" alt="The twelve menu bar styles: forecast graph, ring, ring and headroom, session and weekly bars, per account, mini runway, battery, day by day, pace gauge, headroom, checkmark, remaining percent">
 </p>
 
+## Spend the quota that's about to reset
+
+The proxy shares your requests evenly between accounts, so a week that ends tomorrow can reset half-used while
+another account still has days to go. Turn on **Smart routing** in settings and, whenever an even split would leave
+quota unused, the proxy uses the account whose week resets soonest first, then the next one. SubPacer only routes when
+its forecast shows that saves quota without running you out any sooner, and the Runway follows the new order.
+
 ## Quiet hours, counted
 
 SubPacer learns when you use the proxy and works out, for tonight, how much of each account's weekly quota you'd

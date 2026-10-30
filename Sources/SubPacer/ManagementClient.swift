@@ -37,6 +37,13 @@ struct ManagementClient: Sendable {
         return try JSONDecoder.snake.decode(AuthFilesResponse.self, from: data).files
     }
 
+    /// Sets an account's routing priority. The proxy uses the highest-priority account that isn't
+    /// cooling down, round-robin among equals; 0 is the default.
+    func setPriority(_ priority: Int, file name: String) async throws {
+        let body = try JSONSerialization.data(withJSONObject: ["name": name, "priority": priority])
+        _ = try await send(path: "auth-files/fields", method: "PATCH", body: body)
+    }
+
     /// Performs an upstream request using the stored credential for `authIndex`.
     func apiCall(authIndex: String, url: String, headers: [String: String]) async throws -> (status: Int, body: Data, retryAfter: TimeInterval?) {
         let request = APICallRequest(authIndex: authIndex, method: "GET", url: url, header: headers)
@@ -110,6 +117,7 @@ struct AuthFile: Decodable {
     let statusMessage: String?
     let disabled: Bool?
     let unavailable: Bool?
+    let priority: Int?
     let success: Int?
     let failed: Int?
     let recentRequests: [Bucket]?
@@ -128,7 +136,7 @@ struct AuthFile: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case name, authIndex, provider, type, email, label, status, statusMessage
-        case disabled, unavailable, success, failed, recentRequests, idToken
+        case disabled, unavailable, priority, success, failed, recentRequests, idToken
     }
 
     init(from decoder: Decoder) throws {
@@ -143,6 +151,7 @@ struct AuthFile: Decodable {
         statusMessage = try? c.decodeIfPresent(String.self, forKey: .statusMessage)
         disabled = try? c.decodeIfPresent(Bool.self, forKey: .disabled)
         unavailable = try? c.decodeIfPresent(Bool.self, forKey: .unavailable)
+        priority = try? c.decodeIfPresent(Int.self, forKey: .priority)
         success = try? c.decodeIfPresent(Int.self, forKey: .success)
         failed = try? c.decodeIfPresent(Int.self, forKey: .failed)
         recentRequests = try? c.decodeIfPresent([Bucket].self, forKey: .recentRequests)

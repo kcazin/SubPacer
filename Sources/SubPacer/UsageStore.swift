@@ -24,6 +24,8 @@ struct AccountUsage: Identifiable, Sendable {
     var projections: [String: Projection] = [:]
     var offHours: OffHoursInsight?
     var resetAdvice: ResetAdvice?
+    /// Place in smart routing's order among the provider's proxy accounts, 0 used first.
+    var routeRank: Int?
 
     var provider: (any QuotaProvider.Type)? { QuotaProviders.provider(for: providerID) }
     var displayName: String { provider?.displayName ?? providerID.capitalized }
@@ -65,6 +67,8 @@ final class UsageStore {
     /// One per provider, pooling its accounts. Same order as `accounts`.
     private(set) var runways: [Runway] = []
     private(set) var proxyError: String?
+    /// Why the proxy didn't take smart routing's account priorities.
+    private(set) var routingError: String?
     private(set) var lastUpdated: Date?
     private(set) var isRefreshing = false
     private(set) var profile = ActivityProfile.default
@@ -193,14 +197,30 @@ final class UsageStore {
         merged.sort {
             (providerOrder.firstIndex(of: $0.providerID) ?? .max, $0.email) < (providerOrder.firstIndex(of: $1.providerID) ?? .max, $1.email)
         }
-        runways = providerOrder.compactMap { providerID in
-            RunwayForecast.make(
-                providerID: providerID,
-                accounts: merged.filter { $0.providerID == providerID },
-                samples: { history.samples(for: UsageHistory.key(account: $0, window: $1)) },
-                profile: profile,
-                now: recordedAt
-            )
+        // Provider ID to proxy account IDs, first used first, where smart routing beats an even split.
+        var routeOrder: [String: [String]] = [:]
+        var forecasts: [Runway] = []
+        for providerID in providerOrder {
+            let accounts = merged.filter { $0.providerID == providerID }
+            guard let even = forecast(providerID, accounts: accounts, order: nil, now: recordedAt) else { continue }
+            let proxied = accounts.filter { $0.source == .proxy }
+            let order = SmartRouting.order(proxied, now: recordedAt).map(\.id)
+            if SmartRouting.isOn, source.usesProxy, proxied.count > 1,
+               var routed = forecast(providerID, accounts: accounts, order: order, now: recordedAt),
+               let gain = SmartRouting.gain(routed, over: even, alreadyRouting: runways.contains { $0.providerID == providerID && $0.routed }) {
+                routed.routingGain = gain
+                routeOrder[providerID] = order
+                forecasts.append(routed)
+            } else {
+                forecasts.append(even)
+            }
+        }
+        runways = forecasts
+        for index in merged.indices {
+            merged[index].routeRank = routeOrder[merged[index].providerID]?.firstIndex(of: merged[index].id)
+        }
+        if let proxy {
+            routingError = await SmartRouting.apply(order: routeOrder, files: tracked, client: proxy.client)
         }
         // Weekly projections come from the runway, which knows the accounts share your load.
         let weeklyOutcomes = runways.reduce(into: [String: (Projection.Outcome, Projection.Basis)]()) { result, runway in
@@ -220,6 +240,17 @@ final class UsageStore {
         }
         accounts = merged
         lastUpdated = Date()
+    }
+
+    private func forecast(_ providerID: String, accounts: [AccountUsage], order: [String]?, now: Date) -> Runway? {
+        RunwayForecast.make(
+            providerID: providerID,
+            accounts: accounts,
+            samples: { history.samples(for: UsageHistory.key(account: $0, window: $1)) },
+            profile: profile,
+            routeOrder: order,
+            now: now
+        )
     }
 
     /// The proxy's accounts, or nil when there's no proxy to use; sets `proxyError` and `needsSetup`.

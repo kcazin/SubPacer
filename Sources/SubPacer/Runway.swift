@@ -29,6 +29,18 @@ struct Runway: Identifiable, Sendable {
     let basis: Projection.Basis
     /// Per account ID: how its current weekly window ends at your usual pace, with the load shared across the pool.
     let weeklyOutcomes: [String: Projection.Outcome]
+    /// With smart routing using the accounts one at a time: how much weekly quota, in percent of one
+    /// account's week, it keeps from resetting unused compared with an even split.
+    var routingGain: Double?
+
+    var routed: Bool { routingGain != nil }
+
+    /// Weekly quota, in percent of one account's week, projected to reset unused across the pool.
+    var unusedAtReset: Double {
+        weeklyOutcomes.values.reduce(0) { total, outcome in
+            if case .lastsUntilReset(let used) = outcome { total + max(0, 100 - used) } else { total }
+        }
+    }
 
     var provider: (any QuotaProvider.Type)? { QuotaProviders.provider(for: providerID) }
     var runsOutAt: Date? { outages.first?.interval.start }
@@ -56,18 +68,24 @@ enum RunwayForecast {
 
     /// Simulates the pool forward in 10-minute steps: demand follows your activity pattern
     /// (or your current pace until the running session resets), is split across whichever
-    /// accounts still have quota, and limits refill when they reset.
+    /// accounts still have quota, and limits refill when they reset. With `routeOrder` (account IDs,
+    /// first used first) demand goes to the first account with quota and spills over to the next.
     @MainActor
     static func make(
         providerID: String,
         accounts: [AccountUsage],
         samples: (_ account: String, _ window: String) -> [UsageSample],
         profile: ActivityProfile,
+        routeOrder: [String]? = nil,
         now: Date = Date()
     ) -> Runway? {
         // Accounts that have never reported quota can't be planned around.
         let pool = accounts.filter { !$0.snapshot.windows.isEmpty }
         guard !pool.isEmpty else { return nil }
+        // Pool index to place in the routing order; accounts the proxy doesn't route come last.
+        let routeRank: [Int: Int]? = routeOrder.map { order in
+            Dictionary(uniqueKeysWithValues: pool.indices.map { ($0, order.firstIndex(of: pool[$0].id) ?? order.count + $0) })
+        }
 
         var lanes: [Lane] = []
         /// Weekly usage per limit and account: recorded readings plus the window's start and current value.
@@ -139,6 +157,20 @@ enum RunwayForecast {
             return perAccount.isEmpty ? 0 : perAccount.reduce(0, +) / Double(perAccount.count)
         }
 
+        /// How much of `total` each lane takes: an even split, or with routing, filling lanes in order.
+        func split(_ total: Double, over targets: [Int], lanes: [Lane]) -> [(lane: Int, amount: Double)] {
+            guard let routeRank else { return targets.map { ($0, total / Double(targets.count)) } }
+            let ordered = targets.sorted { routeRank[lanes[$0].account]! < routeRank[lanes[$1].account]! }
+            var left = total
+            var shares: [(lane: Int, amount: Double)] = []
+            for index in ordered where left > 0 {
+                let amount = index == ordered.last ? left : min(left, max(0, 100 - lanes[index].used))
+                if amount > 0 { shares.append((index, amount)) }
+                left -= amount
+            }
+            return shares
+        }
+
         func simulate(pace multiplier: Double, stopAtFirstOutage: Bool) -> (outages: [Runway.Outage], forecast: [Double], lanes: [Lane]) {
             var lanes = lanes
             var outages: [Runway.Outage] = []
@@ -173,9 +205,9 @@ enum RunwayForecast {
                     for (kind, rate) in demandRate where rate > 0 {
                         let total = rate * intensity(at: cursor) * hours * multiplier
                         let targets = lanes.indices.filter { lanes[$0].kind == kind && available.contains(lanes[$0].account) }
-                        for index in targets {
+                        for (index, amount) in split(total, over: targets, lanes: lanes) {
                             let wasAvailable = lanes[index].used < 100
-                            lanes[index].used += total / Double(targets.count)
+                            lanes[index].used += amount
                             if lanes[index].reset == nil { lanes[index].reset = cursor.addingTimeInterval(lanes[index].length) }
                             if wasAvailable && lanes[index].used >= 100 {
                                 lastExhausted = lanes[index].label

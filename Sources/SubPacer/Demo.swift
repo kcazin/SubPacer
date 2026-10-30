@@ -99,6 +99,8 @@ enum Demo {
             let usage = account.provider == "claude" ? claudeUsage(account) : codexUsage(account)
             let payload = String(decoding: try JSONSerialization.data(withJSONObject: usage), as: UTF8.self)
             return try JSONSerialization.data(withJSONObject: ["status_code": 200, "header": [String: [String]](), "body": payload])
+        case "auth-files/fields":
+            return try JSONSerialization.data(withJSONObject: ["status": "ok"])
         default:
             throw ManagementClient.ClientError.http(404, nil)
         }

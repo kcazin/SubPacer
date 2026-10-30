@@ -281,6 +281,12 @@ struct AccountCard: View {
                     .foregroundStyle(.tertiary)
                     .help("Read from this Mac's \(account.providerID == ClaudeQuota.id ? "Claude Code" : "Codex") login, not the proxy")
             }
+            if account.routeRank == 0 {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .help("Smart routing uses this account first: its week resets soonest")
+            }
             Spacer(minLength: 4)
             Text(account.snapshot.plan ?? account.displayName)
                 .font(.system(size: 10, weight: .medium))
@@ -653,7 +659,9 @@ struct RunwayRow: View {
                 .font(.system(size: 10.5))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .help("Projected from \(runway.basis.rawValue), split across accounts that still have quota.")
+                .help(runway.routed
+                    ? "Projected from \(runway.basis.rawValue), with smart routing using one account at a time, the soonest weekly reset first."
+                    : "Projected from \(runway.basis.rawValue), split across accounts that still have quota.")
         }
     }
 
@@ -969,6 +977,7 @@ struct ConnectionCard: View {
     @State private var working = false
     @State private var message: (text: String, isError: Bool)?
     @AppStorage(Connection.Source.storageKey) private var source = Connection.Source.both
+    @AppStorage(SmartRouting.storageKey) private var smartRouting = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -996,6 +1005,9 @@ struct ConnectionCard: View {
             }
             if source.usesProxy {
                 proxyFields
+                if !store.needsSetup && store.accounts.contains(where: { $0.source == .proxy }) {
+                    routingToggle
+                }
             }
         }
         .padding(12)
@@ -1007,6 +1019,39 @@ struct ConnectionCard: View {
         .onChange(of: source) {
             message = nil
             Task { await store.sourceChanged() }
+        }
+        .onChange(of: smartRouting) {
+            Task { await store.refresh() }
+        }
+    }
+
+    @ViewBuilder
+    private var routingToggle: some View {
+        Divider()
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.triangle.branch")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text("Smart routing")
+                .font(.system(size: 12, weight: .semibold))
+            Spacer()
+            Toggle("Smart routing", isOn: $smartRouting)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+        }
+        Text("When an even split would leave quota unused at a weekly reset, the proxy uses the account that resets soonest first, then the next. Sets each account's priority in the proxy; turning this off puts them back.")
+            .font(.system(size: 10.5))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        if smartRouting, let error = store.routingError {
+            Banner(text: error, symbol: "exclamationmark.triangle.fill", tint: Palette.warning)
+        } else if smartRouting {
+            ForEach(routingStatus, id: \.self) { line in
+                Text(line)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -1052,6 +1097,16 @@ struct ConnectionCard: View {
                 .disabled(working || urlText.trimmingCharacters(in: .whitespaces).isEmpty || (key.isEmpty && !hasSavedKey))
         }
         .font(.system(size: 10.5))
+    }
+
+    /// One line per provider with a choice of proxy accounts: whether routing is in use, and what it saves.
+    private var routingStatus: [String] {
+        store.runways.compactMap { runway in
+            guard store.accounts.filter({ $0.providerID == runway.providerID && $0.source == .proxy }).count > 1 else { return nil }
+            let name = runway.provider?.displayName ?? runway.providerID.capitalized
+            guard let gain = runway.routingGain else { return "\(name): shared evenly, nothing would go unused" }
+            return "\(name): soonest reset first, saves \(Int(gain.rounded()))% of a week"
+        }
     }
 
     private func field(_ label: String, @ViewBuilder content: () -> some View) -> some View {
