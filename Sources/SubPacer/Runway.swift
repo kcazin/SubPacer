@@ -32,6 +32,10 @@ struct Runway: Identifiable, Sendable {
     /// With smart routing using the accounts one at a time: how much weekly quota, in percent of one
     /// account's week, it keeps from resetting unused compared with an even split.
     var routingGain: Double?
+    /// The emails of the accounts smart routing uses, first used first.
+    var routeOrder: [String] = []
+    /// Smart routing is on and has accounts to order, routed or not.
+    var routingEnabled = false
 
     var routed: Bool { routingGain != nil }
 

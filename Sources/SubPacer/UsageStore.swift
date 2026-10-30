@@ -205,13 +205,17 @@ final class UsageStore {
             guard let even = forecast(providerID, accounts: accounts, order: nil, now: recordedAt) else { continue }
             let proxied = accounts.filter { $0.source == .proxy }
             let order = SmartRouting.order(proxied, now: recordedAt).map(\.id)
-            if SmartRouting.isOn, source.usesProxy, proxied.count > 1,
-               var routed = forecast(providerID, accounts: accounts, order: order, now: recordedAt),
+            let enabled = SmartRouting.isOn && source.usesProxy && proxied.count > 1
+            if enabled, var routed = forecast(providerID, accounts: accounts, order: order, now: recordedAt),
                let gain = SmartRouting.gain(routed, over: even, alreadyRouting: runways.contains { $0.providerID == providerID && $0.routed }) {
                 routed.routingGain = gain
+                routed.routingEnabled = true
+                routed.routeOrder = order.compactMap { id in proxied.first { $0.id == id }?.email }
                 routeOrder[providerID] = order
                 forecasts.append(routed)
             } else {
+                var even = even
+                even.routingEnabled = enabled
                 forecasts.append(even)
             }
         }

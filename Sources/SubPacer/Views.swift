@@ -281,13 +281,10 @@ struct AccountCard: View {
                     .foregroundStyle(.tertiary)
                     .help("Read from this Mac's \(account.providerID == ClaudeQuota.id ? "Claude Code" : "Codex") login, not the proxy")
             }
-            if account.routeRank == 0 {
-                Image(systemName: "arrow.triangle.branch")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(tint)
-                    .help("Smart routing uses this account first: its week resets soonest")
-            }
             Spacer(minLength: 4)
+            if let rank = account.routeRank {
+                RouteBadge(rank: rank, tint: tint)
+            }
             Text(account.snapshot.plan ?? account.displayName)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
@@ -295,6 +292,31 @@ struct AccountCard: View {
                 .padding(.vertical, 2)
                 .background(Capsule().fill(Color.primary.opacity(0.07)))
         }
+    }
+}
+
+/// Where smart routing puts the account: the proxy uses the 1st until it runs out, then the 2nd.
+struct RouteBadge: View {
+    let rank: Int
+    let tint: Color
+
+    var body: some View {
+        Label(ordinal, systemImage: "arrow.triangle.branch")
+            .labelStyle(CompactLabelStyle())
+            .font(.system(size: 10, weight: .semibold).monospacedDigit())
+            .foregroundStyle(rank == 0 ? AnyShapeStyle(tint) : AnyShapeStyle(.secondary))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(rank == 0 ? tint.opacity(0.14) : Color.primary.opacity(0.07)))
+            .help(rank == 0
+                ? "Smart routing uses this account first: its week resets soonest"
+                : "Smart routing uses this account \(ordinal), once the ones before it run out")
+    }
+
+    private var ordinal: String {
+        let n = rank + 1
+        let suffix = (11...13).contains(n % 100) ? "th" : [1: "st", 2: "nd", 3: "rd"][n % 10] ?? "th"
+        return "\(n)\(suffix)"
     }
 }
 
@@ -662,7 +684,42 @@ struct RunwayRow: View {
                 .help(runway.routed
                     ? "Projected from \(runway.basis.rawValue), with smart routing using one account at a time, the soonest weekly reset first."
                     : "Projected from \(runway.basis.rawValue), split across accounts that still have quota.")
+            if let gain = runway.routingGain {
+                routing(gain: gain)
+            } else if runway.routingEnabled {
+                Label("Shared evenly · routing in order wouldn't save quota", systemImage: "arrow.triangle.branch")
+                    .labelStyle(CompactLabelStyle())
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .help("Smart routing is on, but nothing that would go unused can be saved by using the soonest reset first, so the proxy keeps its even split")
+            }
         }
+    }
+
+    /// Smart routing's order, and the weekly quota it keeps from going unused.
+    private func routing(gain: Double) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "arrow.triangle.branch")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(tint)
+            ForEach(Array(runway.routeOrder.enumerated()), id: \.offset) { index, email in
+                if index > 0 {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                EmailText(email: email, text: String(email.prefix { $0 != "@" }))
+                    .foregroundStyle(index == 0 ? .primary : .secondary)
+            }
+            Text("· saves \(Int(gain.rounded()))% of a week")
+                .foregroundStyle(.secondary)
+                .layoutPriority(1)
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 10.5))
+        .lineLimit(1)
+        .help("Smart routing: the proxy uses these accounts in this order, soonest weekly reset first, instead of evenly")
     }
 
     @ViewBuilder
@@ -1166,13 +1223,15 @@ final class Privacy {
 /// An account email, blurred by default so the panel can be screenshotted or shared. Click to show or hide it.
 struct EmailText: View {
     let email: String
+    /// What to show instead of the whole address, e.g. the part before the @. Blurred the same way.
+    var text: String?
     @AppStorage(Privacy.blurKey) private var blurEmails = true
     private let privacy = Privacy.shared
 
     private var hidden: Bool { blurEmails && !privacy.revealed.contains(email) }
 
     var body: some View {
-        Text(email)
+        Text(text ?? email)
             .blur(radius: hidden ? 4.5 : 0)
             .animation(.snappy(duration: 0.2), value: hidden)
             .contentShape(Rectangle())
