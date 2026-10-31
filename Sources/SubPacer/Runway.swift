@@ -162,9 +162,16 @@ enum RunwayForecast {
         }
 
         /// How much of `total` each lane takes: an even split, or with routing, filling lanes in order.
+        /// The order is worked out again at every step, the way SubPacer redoes it on each refresh: once an
+        /// account's week resets, its fresh week goes behind the ones that reset sooner.
         func split(_ total: Double, over targets: [Int], lanes: [Lane]) -> [(lane: Int, amount: Double)] {
             guard let routeRank else { return targets.map { ($0, total / Double(targets.count)) } }
-            let ordered = targets.sorted { routeRank[lanes[$0].account]! < routeRank[lanes[$1].account]! }
+            func key(_ lane: Int) -> (Date, Int) {
+                let account = lanes[lane].account
+                let weekEnds = lanes.filter { $0.account == account && $0.isLong }.map { $0.reset ?? .distantFuture }.min()
+                return (weekEnds ?? .distantFuture, routeRank[account]!)
+            }
+            let ordered = targets.sorted { key($0) < key($1) }
             var left = total
             var shares: [(lane: Int, amount: Double)] = []
             for index in ordered where left > 0 {
