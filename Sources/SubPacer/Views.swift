@@ -109,6 +109,9 @@ struct UsagePanel: View {
         if showRunway && !store.runways.isEmpty {
             RunwayCard(runways: store.runways)
         }
+        if Connection.source.usesProxy && store.accounts.contains(where: { $0.source == .proxy }) {
+            RoutingCard(store: store)
+        }
         if showAccounts {
             ForEach(store.accounts) { account in
                 AccountCard(account: account)
@@ -1036,7 +1039,6 @@ struct ConnectionCard: View {
     @State private var working = false
     @State private var message: (text: String, isError: Bool)?
     @AppStorage(Connection.Source.storageKey) private var source = Connection.Source.both
-    @State private var routingMode = SmartRouting.mode
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1064,9 +1066,6 @@ struct ConnectionCard: View {
             }
             if source.usesProxy {
                 proxyFields
-                if !store.needsSetup && store.accounts.contains(where: { $0.source == .proxy }) {
-                    routingToggle
-                }
             }
         }
         .padding(12)
@@ -1078,43 +1077,6 @@ struct ConnectionCard: View {
         .onChange(of: source) {
             message = nil
             Task { await store.sourceChanged() }
-        }
-        .onChange(of: routingMode) {
-            UserDefaults.standard.set(routingMode.rawValue, forKey: SmartRouting.Mode.storageKey)
-            Task { await store.refresh() }
-        }
-    }
-
-    @ViewBuilder
-    private var routingToggle: some View {
-        Divider()
-        HStack(spacing: 6) {
-            Image(systemName: "arrow.triangle.branch")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-            Text("Routing")
-                .font(.system(size: 12, weight: .semibold))
-                .fixedSize()
-            Spacer(minLength: 8)
-            Picker("Routing", selection: $routingMode) {
-                ForEach(SmartRouting.Mode.allCases) { Text($0.title).tag($0) }
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-        }
-        Text(routingMode.summary + (routingMode == .even ? " Priorities SubPacer set before go back to 0." : " Sets each account's priority in the proxy; Even puts them back."))
-            .font(.system(size: 10.5))
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-        if routingMode != .even, let error = store.routingError {
-            Banner(text: error, symbol: "exclamationmark.triangle.fill", tint: Palette.warning)
-        } else if routingMode != .even {
-            ForEach(routingStatus, id: \.self) { line in
-                Text(line)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 
@@ -1160,17 +1122,6 @@ struct ConnectionCard: View {
                 .disabled(working || urlText.trimmingCharacters(in: .whitespaces).isEmpty || (key.isEmpty && !hasSavedKey))
         }
         .font(.system(size: 10.5))
-    }
-
-    /// One line per provider with a choice of proxy accounts: whether routing is in use, and what it saves.
-    private var routingStatus: [String] {
-        store.runways.compactMap { runway in
-            guard store.accounts.filter({ $0.providerID == runway.providerID && $0.source == .proxy }).count > 1 else { return nil }
-            let name = runway.provider?.displayName ?? runway.providerID.capitalized
-            guard let gain = runway.routingGain else { return "\(name): shared evenly, nothing would go unused" }
-            let effect = RoutingCopy.effect(gain: gain, forced: runway.routingForced)
-            return "\(name): soonest reset first" + (effect.isEmpty ? "" : ", " + effect.dropFirst(2))
-        }
     }
 
     private func field(_ label: String, @ViewBuilder content: () -> some View) -> some View {
@@ -1614,6 +1565,64 @@ enum ResetFormatter {
         Calendar.current.isDateInToday(date)
             ? date.formatted(date: .omitted, time: .shortened)
             : date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+    }
+}
+
+/// Picks how the proxy shares each provider's accounts, and says what that does for each provider.
+struct RoutingCard: View {
+    let store: UsageStore
+    @State private var mode = SmartRouting.mode
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text("Routing")
+                    .font(.system(size: 12, weight: .semibold))
+                    .fixedSize()
+                Spacer(minLength: 8)
+                Picker("Routing", selection: $mode) {
+                    ForEach(SmartRouting.Mode.allCases) { Text($0.title).tag($0) }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+                .fixedSize()
+                .help(mode.summary)
+            }
+            if mode != .even, let error = store.routingError {
+                Banner(text: error, symbol: "exclamationmark.triangle.fill", tint: Palette.warning)
+            } else {
+                ForEach(status, id: \.self) { line in
+                    Text(line)
+                        .lineLimit(1)
+                }
+                .font(.system(size: 10.5))
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .onChange(of: mode) {
+            UserDefaults.standard.set(mode.rawValue, forKey: SmartRouting.Mode.storageKey)
+            Task { await store.refresh() }
+        }
+    }
+
+    /// One line per provider with a choice of proxy accounts: how its requests are shared, and what that saves.
+    private var status: [String] {
+        let lines = QuotaProviders.all.compactMap { provider -> String? in
+            guard store.accounts.filter({ $0.providerID == provider.id && $0.source == .proxy }).count > 1 else { return nil }
+            let name = provider.displayName
+            if mode == .even { return "\(name): shared evenly" }
+            guard let runway = store.runways.first(where: { $0.providerID == provider.id }) else { return "\(name): no forecast yet, shared evenly" }
+            guard let gain = runway.routingGain else { return "\(name): shared evenly, nothing would go unused" }
+            let effect = RoutingCopy.effect(gain: gain, forced: runway.routingForced)
+            return "\(name): soonest reset first" + (effect.isEmpty ? "" : ", " + effect.dropFirst(2))
+        }
+        return lines.isEmpty ? ["One proxy account per provider, nothing to route"] : lines
     }
 }
 

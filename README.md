@@ -51,7 +51,7 @@ With both providers, a compact mode keeps just the graphics.
 ## Spend the quota that's about to reset
 
 The proxy shares your requests evenly between accounts, so a week that ends tomorrow can reset half-used while
-another account still has days to go. Set **Routing** to **Smart** in settings and, whenever an even split would leave
+another account still has days to go. Set **Routing** to **Smart** in the panel and, whenever an even split would leave
 quota unused, the proxy uses the account whose week resets soonest first, then the next one. SubPacer only routes when
 its forecast shows that saves quota without running you out any sooner. **In order** routes that way all the time, and
 **Even** leaves the proxy's round-robin alone. The Runway shows the order and what it saves, and each account card its

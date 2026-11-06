@@ -86,7 +86,7 @@ xattr -dr com.apple.quarantine /Applications/SubPacer.app
 
 | Setting | How |
 | --- | --- |
-| Routing | Settings, or `defaults write dev.killian.subpacer routingMode smart` (`even`, `smart`, `ordered`) |
+| Routing | The panel, or `defaults write dev.killian.subpacer routingMode smart` (`even`, `smart`, `ordered`) |
 | Account source | Settings, or `defaults write dev.killian.subpacer accountSource local` (`both`, `local`, `proxy`) |
 | Proxy URL | Settings, or `defaults write dev.killian.subpacer proxyURL https://host:8317` |
 | Management key | Settings, or `security add-generic-password -U -s SubPacer -a management-key -w` (prompts for it) |
