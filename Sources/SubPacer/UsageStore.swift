@@ -197,25 +197,39 @@ final class UsageStore {
         merged.sort {
             (providerOrder.firstIndex(of: $0.providerID) ?? .max, $0.email) < (providerOrder.firstIndex(of: $1.providerID) ?? .max, $1.email)
         }
-        // Provider ID to proxy account IDs, first used first, where smart routing beats an even split.
+        // Provider ID to proxy account IDs, first used first: always in the fixed orders, with Smart only
+        // where routing beats an even split.
         var routeOrder: [String: [String]] = [:]
         var forecasts: [Runway] = []
+        let mode = SmartRouting.mode
         for providerID in providerOrder {
             let accounts = merged.filter { $0.providerID == providerID }
-            guard let even = forecast(providerID, accounts: accounts, order: nil, now: recordedAt) else { continue }
             let proxied = accounts.filter { $0.source == .proxy }
-            let order = SmartRouting.order(proxied, now: recordedAt).map(\.id)
-            let mode = SmartRouting.mode
+            var order = SmartRouting.order(proxied, mode: mode, now: recordedAt).map(\.id)
+            // An account whose usage can't be read has no reset to sort by; rather than reshuffle the
+            // proxy's priorities on every refresh, keep the order from last time.
+            let previous = self.accounts.filter { $0.providerID == providerID && $0.routeRank != nil }
+                .sorted { $0.routeRank! < $1.routeRank! }.map(\.id)
+            if proxied.contains(where: { $0.weeklyWindow == nil }), Set(previous) == Set(order) {
+                order = previous
+                if mode == .pinned, let email = SmartRouting.pins[providerID],
+                   let pinned = proxied.first(where: { $0.email == email }), let at = order.firstIndex(of: pinned.id) {
+                    order.insert(order.remove(at: at), at: 0)
+                }
+            }
             let enabled = mode != .even && source.usesProxy && proxied.count > 1
-            let routedForecast = enabled ? forecast(providerID, accounts: accounts, order: order, now: recordedAt) : nil
+            // A fixed order doesn't wait on a forecast, e.g. while an account's usage can't be read.
+            if enabled && mode != .smart { routeOrder[providerID] = order }
+            guard let even = forecast(providerID, accounts: accounts, order: nil, now: recordedAt) else { continue }
+            let routedForecast = enabled ? forecast(providerID, accounts: accounts, order: order, resort: mode.resort, now: recordedAt) : nil
             let gain: Double? = routedForecast.flatMap { routed in
-                mode == .ordered
-                    ? SmartRouting.rawGain(routed, over: even)
-                    : SmartRouting.gain(routed, over: even, alreadyRouting: runways.contains { $0.providerID == providerID && $0.routed })
+                mode == .smart
+                    ? SmartRouting.gain(routed, over: even, alreadyRouting: runways.contains { $0.providerID == providerID && $0.routed })
+                    : SmartRouting.rawGain(routed, over: even)
             }
             if var routed = routedForecast, let gain {
                 routed.routingGain = gain
-                routed.routingForced = mode == .ordered
+                routed.routingMode = mode
                 routed.routingEnabled = true
                 routed.routeOrder = order.compactMap { id in proxied.first { $0.id == id }?.email }
                 routeOrder[providerID] = order
@@ -253,13 +267,14 @@ final class UsageStore {
         lastUpdated = Date()
     }
 
-    private func forecast(_ providerID: String, accounts: [AccountUsage], order: [String]?, now: Date) -> Runway? {
+    private func forecast(_ providerID: String, accounts: [AccountUsage], order: [String]?, resort: SmartRouting.Resort = .soonestReset, now: Date) -> Runway? {
         RunwayForecast.make(
             providerID: providerID,
             accounts: accounts,
             samples: { history.samples(for: UsageHistory.key(account: $0, window: $1)) },
             profile: profile,
             routeOrder: order,
+            resort: resort,
             now: now
         )
     }

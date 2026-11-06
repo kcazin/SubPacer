@@ -37,8 +37,9 @@ struct Runway: Identifiable, Sendable {
     var routeOrder: [String] = []
     /// Smart routing is on and has accounts to order, routed or not.
     var routingEnabled = false
-    /// Routed in order because the setting says always, not because the forecast showed it saves quota.
-    var routingForced = false
+    /// How the accounts are routed; anything but Smart routes whatever the forecast says.
+    var routingMode = SmartRouting.Mode.even
+    var routingForced: Bool { routingMode != .smart }
 
     var routed: Bool { routingGain != nil }
 
@@ -84,6 +85,7 @@ enum RunwayForecast {
         samples: (_ account: String, _ window: String) -> [UsageSample],
         profile: ActivityProfile,
         routeOrder: [String]? = nil,
+        resort: SmartRouting.Resort = .soonestReset,
         now: Date = Date()
     ) -> Runway? {
         // Accounts that have never reported quota can't be planned around.
@@ -165,14 +167,18 @@ enum RunwayForecast {
         }
 
         /// How much of `total` each lane takes: an even split, or with routing, filling lanes in order.
-        /// The order is worked out again at every step, the way SubPacer redoes it on each refresh: once an
-        /// account's week resets, its fresh week goes behind the ones that reset sooner.
+        /// The order is worked out again at every step, the way SubPacer redoes it on each refresh: soonest
+        /// reset first puts an account's fresh week behind the ones that reset sooner, latest reset first ahead.
         func split(_ total: Double, over targets: [Int], lanes: [Lane]) -> [(lane: Int, amount: Double)] {
             guard let routeRank else { return targets.map { ($0, total / Double(targets.count)) } }
-            func key(_ lane: Int) -> (Date, Int) {
+            func key(_ lane: Int) -> (Double, Int) {
                 let account = lanes[lane].account
-                let weekEnds = lanes.filter { $0.account == account && $0.isLong }.map { $0.reset ?? .distantFuture }.min()
-                return (weekEnds ?? .distantFuture, routeRank[account]!)
+                let weekEnds = lanes.filter { $0.account == account && $0.isLong }.map { $0.reset ?? .distantFuture }.min() ?? .distantFuture
+                switch resort {
+                case .soonestReset: return (weekEnds.timeIntervalSinceReferenceDate, routeRank[account]!)
+                case .latestReset: return (-weekEnds.timeIntervalSinceReferenceDate, routeRank[account]!)
+                case .fixed: return (0, routeRank[account]!)
+                }
             }
             let ordered = targets.sorted { key($0) < key($1) }
             var left = total

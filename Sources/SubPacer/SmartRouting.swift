@@ -14,6 +14,10 @@ enum SmartRouting {
         case smart
         /// Soonest reset first, always, whatever the forecast says.
         case ordered
+        /// Latest reset first, keeping the weeks about to end for last.
+        case latest
+        /// An account you pick first (say, a subscription you're cancelling), then the rest soonest reset first.
+        case pinned
 
         static let storageKey = "routingMode"
 
@@ -21,9 +25,30 @@ enum SmartRouting {
 
         var title: String {
             switch self {
-            case .even: "Even"
+            case .even: "Even split"
             case .smart: "Smart"
-            case .ordered: "In order"
+            case .ordered: "Soonest reset first"
+            case .latest: "Latest reset first"
+            case .pinned: "Account first"
+            }
+        }
+
+        /// How each provider's accounts are lined up, for the status lines.
+        var orderPhrase: String {
+            switch self {
+            case .even: "shared evenly"
+            case .smart, .ordered: "soonest reset first"
+            case .latest: "latest reset first"
+            case .pinned: "first"
+            }
+        }
+
+        /// How the forecast re-sorts accounts as weeks reset, matching what each refresh would do.
+        var resort: Resort {
+            switch self {
+            case .even, .smart, .ordered: .soonestReset
+            case .latest: .latestReset
+            case .pinned: .fixed
             }
         }
 
@@ -32,8 +57,26 @@ enum SmartRouting {
             case .even: "The proxy splits requests evenly between accounts. SubPacer leaves account priorities alone."
             case .smart: "When an even split would leave quota unused at a weekly reset, the proxy uses the account that resets soonest first, then the next."
             case .ordered: "The proxy always uses the account whose week resets soonest first, then the next, even when the forecast says an even split would do as well."
+            case .latest: "The proxy uses the account whose week resets last first, then the next, leaving the weeks about to end for last."
+            case .pinned: "The proxy uses the account you pick first, until it runs out, then the rest soonest reset first. Handy for draining a subscription you're about to cancel."
             }
         }
+    }
+
+    /// How the forecast orders accounts at each step.
+    enum Resort { case soonestReset, latestReset, fixed }
+
+    /// Provider ID to the email of the account `pinned` uses first.
+    private static let pinsKey = "routingPins"
+
+    static var pins: [String: String] {
+        UserDefaults.standard.dictionary(forKey: pinsKey) as? [String: String] ?? [:]
+    }
+
+    static func pin(_ email: String, for providerID: String) {
+        var pins = pins
+        pins[providerID] = email
+        UserDefaults.standard.set(pins, forKey: pinsKey)
     }
 
     /// The old on/off setting, read once to pick the mode for anyone who had it on.
@@ -51,7 +94,30 @@ enum SmartRouting {
 
     /// A provider's accounts in the order they should be used: the soonest weekly reset first, then weeks
     /// that haven't started, then accounts whose week is used up or unknown.
-    static func order(_ accounts: [AccountUsage], now: Date = Date()) -> [AccountUsage] {
+    static func order(_ accounts: [AccountUsage], mode: Mode, now: Date = Date()) -> [AccountUsage] {
+        let soonest = order(accounts, now: now)
+        switch mode {
+        case .even, .smart, .ordered:
+            return soonest
+        case .latest:
+            // Weeks not started yet end last of all once they start, so they go first.
+            func key(_ account: AccountUsage) -> (Int, Double, String) {
+                let weekUsedUp = account.exhaustedWindows.contains { ($0.windowLength ?? 0) >= 86_400 }
+                guard let weekly = account.weeklyWindow, !weekUsedUp else { return (1, 0, account.email) }
+                guard let reset = weekly.resetsAt, reset > now else { return (0, -.infinity, account.email) }
+                return (0, -reset.timeIntervalSinceReferenceDate, account.email)
+            }
+            return accounts.sorted { key($0) < key($1) }
+        case .pinned:
+            guard let email = accounts.first.flatMap({ pins[$0.providerID] }),
+                  let first = soonest.firstIndex(where: { $0.email == email }) else { return soonest }
+            var ordered = soonest
+            ordered.insert(ordered.remove(at: first), at: 0)
+            return ordered
+        }
+    }
+
+    private static func order(_ accounts: [AccountUsage], now: Date) -> [AccountUsage] {
         func key(_ account: AccountUsage) -> (Int, Date, String) {
             let weekUsedUp = account.exhaustedWindows.contains { ($0.windowLength ?? 0) >= 86_400 }
             guard let weekly = account.weeklyWindow, !weekUsedUp else { return (2, .distantFuture, account.email) }

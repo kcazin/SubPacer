@@ -312,8 +312,8 @@ struct RouteBadge: View {
             .padding(.vertical, 2)
             .background(Capsule().fill(rank == 0 ? tint.opacity(0.14) : Color.primary.opacity(0.07)))
             .help(rank == 0
-                ? "Smart routing uses this account first: its week resets soonest"
-                : "Smart routing uses this account \(ordinal), once the ones before it run out")
+                ? "The proxy uses this account first"
+                : "The proxy uses this account \(ordinal), once the ones before it run out")
     }
 
     private var ordinal: String {
@@ -722,9 +722,7 @@ struct RunwayRow: View {
         }
         .font(.system(size: 10.5))
         .lineLimit(1)
-        .help(runway.routingForced
-            ? "Routing in order: the proxy always uses these accounts in this order, soonest weekly reset first"
-            : "Smart routing: the proxy uses these accounts in this order, soonest weekly reset first, instead of evenly")
+        .help("\(runway.routingMode.title): the proxy uses these accounts in this order instead of evenly")
     }
 
     @ViewBuilder
@@ -1572,6 +1570,7 @@ enum ResetFormatter {
 struct RoutingCard: View {
     let store: UsageStore
     @State private var mode = SmartRouting.mode
+    @State private var pins = SmartRouting.pins
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1587,20 +1586,21 @@ struct RoutingCard: View {
                     ForEach(SmartRouting.Mode.allCases) { Text($0.title).tag($0) }
                 }
                 .labelsHidden()
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
                 .controlSize(.small)
                 .fixedSize()
                 .help(mode.summary)
             }
             if mode != .even, let error = store.routingError {
                 Banner(text: error, symbol: "exclamationmark.triangle.fill", tint: Palette.warning)
+            } else if providers.isEmpty {
+                Text("One proxy account per provider, nothing to route")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
             } else {
-                ForEach(status, id: \.self) { line in
-                    Text(line)
-                        .lineLimit(1)
+                ForEach(providers, id: \.id) { provider in
+                    line(provider)
                 }
-                .font(.system(size: 10.5))
-                .foregroundStyle(.secondary)
             }
         }
         .padding(12)
@@ -1611,18 +1611,61 @@ struct RoutingCard: View {
         }
     }
 
-    /// One line per provider with a choice of proxy accounts: how its requests are shared, and what that saves.
-    private var status: [String] {
-        let lines = QuotaProviders.all.compactMap { provider -> String? in
-            guard store.accounts.filter({ $0.providerID == provider.id && $0.source == .proxy }).count > 1 else { return nil }
-            let name = provider.displayName
-            if mode == .even { return "\(name): shared evenly" }
-            guard let runway = store.runways.first(where: { $0.providerID == provider.id }) else { return "\(name): no forecast yet, shared evenly" }
-            guard let gain = runway.routingGain else { return "\(name): shared evenly, nothing would go unused" }
-            let effect = RoutingCopy.effect(gain: gain, forced: runway.routingForced)
-            return "\(name): soonest reset first" + (effect.isEmpty ? "" : ", " + effect.dropFirst(2))
+    /// Providers with a choice of proxy accounts, and those accounts.
+    private var providers: [(id: String, name: String, accounts: [AccountUsage])] {
+        QuotaProviders.all.compactMap { provider in
+            let accounts = store.accounts.filter { $0.providerID == provider.id && $0.source == .proxy }
+            return accounts.count > 1 ? (provider.id, provider.displayName, accounts) : nil
         }
-        return lines.isEmpty ? ["One proxy account per provider, nothing to route"] : lines
+    }
+
+    /// How one provider's requests are shared, and what that saves; with Account first, which account that is.
+    private func line(_ provider: (id: String, name: String, accounts: [AccountUsage])) -> some View {
+        let runway = store.runways.first { $0.providerID == provider.id }
+        return HStack(spacing: 4) {
+            Text("\(provider.name):")
+            if mode == .pinned {
+                // The menu only shows addresses once opened; the label stays blurred like every other email.
+                EmailText(email: pinned(provider))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Menu {
+                    ForEach(provider.accounts) { account in
+                        Button(account.email) {
+                            SmartRouting.pin(account.email, for: provider.id)
+                            pins = SmartRouting.pins
+                            Task { await store.refresh() }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "chevron.up.chevron.down")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Choose the account the proxy uses first, until it runs out")
+            }
+            Text(status(provider.id, runway: runway))
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 10.5))
+        .foregroundStyle(.secondary)
+    }
+
+    /// The account Account first puts first: the one you picked, else whatever comes first now.
+    private func pinned(_ provider: (id: String, name: String, accounts: [AccountUsage])) -> String {
+        if let email = pins[provider.id], provider.accounts.contains(where: { $0.email == email }) { return email }
+        return provider.accounts.first { $0.routeRank == 0 }?.email ?? ""
+    }
+
+    private func status(_ providerID: String, runway: Runway?) -> String {
+        if mode == .even { return "shared evenly" }
+        guard let runway else { return mode == .smart ? "no forecast yet, shared evenly" : mode.orderPhrase }
+        guard let gain = runway.routingGain else { return "shared evenly, nothing would go unused" }
+        let effect = RoutingCopy.effect(gain: gain, forced: runway.routingForced)
+        return mode.orderPhrase + (effect.isEmpty ? "" : ", " + effect.dropFirst(2))
     }
 }
 
