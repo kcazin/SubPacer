@@ -1601,6 +1601,11 @@ struct RoutingCard: View {
                 ForEach(providers, id: \.id) { provider in
                     line(provider)
                 }
+                if mode != .even {
+                    ForEach(store.accounts.filter { $0.source == .proxy && $0.routeDemoted(at: Date()) }) { account in
+                        demotion(account)
+                    }
+                }
             }
         }
         .padding(12)
@@ -1634,6 +1639,7 @@ struct RoutingCard: View {
                     ForEach(provider.accounts) { account in
                         Button(account.email) {
                             SmartRouting.pin(account.email, for: provider.id)
+                            AccountHealth.forgive(providerID: provider.id, email: account.email)
                             pins = SmartRouting.pins
                             Task { await store.refresh() }
                         }
@@ -1646,12 +1652,41 @@ struct RoutingCard: View {
                 .fixedSize()
                 .help("Choose the account the proxy uses first, until it runs out")
             }
-            Text(status(provider.id, runway: runway))
+            Text(pinnedDemoted(provider) ? "first once it works again" : status(provider.id, runway: runway))
                 .lineLimit(1)
             Spacer(minLength: 0)
         }
         .font(.system(size: 10.5))
         .foregroundStyle(.secondary)
+    }
+
+    /// An account routing uses last because it keeps failing.
+    private func demotion(_ account: AccountUsage) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Palette.warning)
+            EmailText(email: account.email)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if let since = account.failingSince {
+                Text("failing for \(Self.duration(since: since)), used last")
+                    .fixedSize()
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 10.5))
+        .foregroundStyle(.secondary)
+        .help("Its usage or the proxy's requests on it have kept failing for over \(Int(AccountHealth.demoteAfter / 3600)) hours, e.g. a cancelled subscription, so the other accounts go first. It's trusted again once it works, or when you pick it in Account first.")
+    }
+
+    /// The account picked for Account first keeps failing, so it's used last for now.
+    private func pinnedDemoted(_ provider: (id: String, name: String, accounts: [AccountUsage])) -> Bool {
+        mode == .pinned && provider.accounts.contains { $0.email == pinned(provider) && $0.routeDemoted(at: Date()) }
+    }
+
+    private static func duration(since: Date) -> String {
+        let hours = Int(Date().timeIntervalSince(since) / 3600)
+        return hours < 48 ? "\(hours)h" : "\(hours / 24)d"
     }
 
     /// The account Account first puts first: the one you picked, else whatever comes first now.

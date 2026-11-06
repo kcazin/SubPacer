@@ -79,6 +79,12 @@ enum SmartRouting {
         UserDefaults.standard.set(pins, forKey: pinsKey)
     }
 
+    /// Provider ID to the account IDs routing last used, first used first.
+    static var lastOrder: [String: [String]] {
+        get { UserDefaults.standard.dictionary(forKey: "routing.lastOrder") as? [String: [String]] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: "routing.lastOrder") }
+    }
+
     /// The old on/off setting, read once to pick the mode for anyone who had it on.
     private static let legacyKey = "smartRouting"
     /// Auth files whose priority SubPacer set, put back to the default when routing is turned off.

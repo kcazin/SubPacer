@@ -26,6 +26,15 @@ struct AccountUsage: Identifiable, Sendable {
     var resetAdvice: ResetAdvice?
     /// Place in smart routing's order among the provider's proxy accounts, 0 used first.
     var routeRank: Int?
+    /// The usage API is backing off after a 429, which says nothing about the account itself.
+    var rateLimited = false
+    /// Since when the account has kept failing; see `AccountHealth`.
+    var failingSince: Date?
+
+    /// Failing long enough that routing uses it last.
+    func routeDemoted(at now: Date) -> Bool {
+        failingSince.map { now.timeIntervalSince($0) >= AccountHealth.demoteAfter } ?? false
+    }
 
     var provider: (any QuotaProvider.Type)? { QuotaProviders.provider(for: providerID) }
     var displayName: String { provider?.displayName ?? providerID.capitalized }
@@ -202,14 +211,17 @@ final class UsageStore {
         var routeOrder: [String: [String]] = [:]
         var forecasts: [Runway] = []
         let mode = SmartRouting.mode
+        // Accounts that keep failing go last in every order, so the next account takes over for good.
+        let failingSince = AccountHealth.update(merged, observed: Set(tracked.compactMap(\.authIndex)), now: recordedAt)
+        for index in merged.indices { merged[index].failingSince = failingSince[merged[index].id] }
+        let demoted = Set(merged.filter { $0.routeDemoted(at: recordedAt) }.map(\.id))
         for providerID in providerOrder {
             let accounts = merged.filter { $0.providerID == providerID }
             let proxied = accounts.filter { $0.source == .proxy }
             var order = SmartRouting.order(proxied, mode: mode, now: recordedAt).map(\.id)
             // An account whose usage can't be read has no reset to sort by; rather than reshuffle the
-            // proxy's priorities on every refresh, keep the order from last time.
-            let previous = self.accounts.filter { $0.providerID == providerID && $0.routeRank != nil }
-                .sorted { $0.routeRank! < $1.routeRank! }.map(\.id)
+            // proxy's priorities on every refresh or launch, keep the order from last time.
+            let previous = SmartRouting.lastOrder[providerID] ?? []
             if proxied.contains(where: { $0.weeklyWindow == nil }), Set(previous) == Set(order) {
                 order = previous
                 if mode == .pinned, let email = SmartRouting.pins[providerID],
@@ -217,6 +229,7 @@ final class UsageStore {
                     order.insert(order.remove(at: at), at: 0)
                 }
             }
+            order = order.filter { !demoted.contains($0) } + order.filter { demoted.contains($0) }
             let enabled = mode != .even && source.usesProxy && proxied.count > 1
             // A fixed order doesn't wait on a forecast, e.g. while an account's usage can't be read.
             if enabled && mode != .smart { routeOrder[providerID] = order }
@@ -241,6 +254,7 @@ final class UsageStore {
             }
         }
         runways = forecasts
+        SmartRouting.lastOrder = routeOrder
         for index in merged.indices {
             merged[index].routeRank = routeOrder[merged[index].providerID]?.firstIndex(of: merged[index].id)
         }
@@ -394,6 +408,7 @@ final class UsageStore {
         }
         if let skipUntil {
             usage.error = rateLimitMessage(provider, until: skipUntil)
+            usage.rateLimited = true
             return FetchResult(usage: usage)
         }
 
@@ -409,6 +424,7 @@ final class UsageStore {
             case 429:
                 let retryAfter = response.retryAfter ?? 600
                 usage.error = rateLimitMessage(provider, until: Date().addingTimeInterval(retryAfter))
+                usage.rateLimited = true
                 return FetchResult(usage: usage, retryAfter: retryAfter)
             default:
                 usage.error = "\(provider.displayName) returned HTTP \(response.status)"
@@ -425,6 +441,7 @@ final class UsageStore {
         guard let provider = QuotaProviders.provider(for: login.providerID) else { return FetchResult(usage: usage) }
         if let skipUntil {
             usage.error = rateLimitMessage(provider, until: skipUntil)
+            usage.rateLimited = true
             return FetchResult(usage: usage)
         }
         // Not an error: the CLI renews it the next time it runs, and usage can't move until then.
@@ -446,6 +463,7 @@ final class UsageStore {
             case 429:
                 let retryAfter = response.retryAfter ?? 600
                 usage.error = rateLimitMessage(provider, until: Date().addingTimeInterval(retryAfter))
+                usage.rateLimited = true
                 return FetchResult(usage: usage, retryAfter: retryAfter)
             default:
                 usage.error = "\(provider.displayName) returned HTTP \(response.status)"

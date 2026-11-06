@@ -53,7 +53,8 @@ with every request. Plain `http://` is only accepted for `localhost`. Set `allow
 - **Routing only sets priorities.** Set to anything but Even split, SubPacer writes each Claude and Codex account's `priority`
   through `/v0/management/auth-files/fields` (n for the account to use first of n, down to 1), which the proxy keeps
   in the auth file. It overwrites priorities you set yourself on those accounts, and setting it to Even split sets the ones it
-  changed back to 0. It needs a CLIProxyAPI recent enough to have that endpoint.
+  changed back to 0. An account whose usage or proxy requests keep failing for 3 hours (not just the usage API's rate limiting) gets
+  the lowest priority until it works again. It needs a CLIProxyAPI recent enough to have that endpoint.
 - **Tokens stay in the proxy.** Quota requests go through the proxy's `/v0/management/api-call`, which inserts each
   account's token server-side. SubPacer never sees a proxy account's credential.
 - **CLI logins are only read.** The Claude Code and Codex tokens on this Mac are read on each refresh, sent only to

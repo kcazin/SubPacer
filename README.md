@@ -56,7 +56,8 @@ quota unused, the proxy uses the account whose week resets soonest first, then t
 its forecast shows that saves quota without running you out any sooner. **Soonest reset first** routes that way all the
 time, **Latest reset first** the other way round, **Account first** drains the account you pick (say, a subscription
 you're about to cancel) before the rest, and **Even split** leaves the proxy's round-robin alone. The Runway shows the
-order and what it saves or wastes, and each account card its place in it.
+order and what it saves or wastes, and each account card its place in it. An account that keeps failing for 3 hours,
+like a cancelled subscription, goes last whatever the order, until it works again.
 
 ## Quiet hours, counted
 
