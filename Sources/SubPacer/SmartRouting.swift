@@ -6,11 +6,48 @@ import Foundation
 /// Works through each account's `priority` in the proxy, which always picks the highest-priority account
 /// that isn't cooling down, so when one runs out it moves on to the next.
 enum SmartRouting {
-    static let storageKey = "smartRouting"
+    /// How the proxy shares a provider's accounts.
+    enum Mode: String, CaseIterable, Identifiable {
+        /// The proxy's own round-robin; SubPacer leaves priorities alone.
+        case even
+        /// Soonest reset first, but only when the forecast shows that saves quota without running out sooner.
+        case smart
+        /// Soonest reset first, always, whatever the forecast says.
+        case ordered
+
+        static let storageKey = "routingMode"
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .even: "Even"
+            case .smart: "Smart"
+            case .ordered: "In order"
+            }
+        }
+
+        var summary: String {
+            switch self {
+            case .even: "The proxy splits requests evenly between accounts. SubPacer leaves account priorities alone."
+            case .smart: "When an even split would leave quota unused at a weekly reset, the proxy uses the account that resets soonest first, then the next."
+            case .ordered: "The proxy always uses the account whose week resets soonest first, then the next, even when the forecast says an even split would do as well."
+            }
+        }
+    }
+
+    /// The old on/off setting, read once to pick the mode for anyone who had it on.
+    private static let legacyKey = "smartRouting"
     /// Auth files whose priority SubPacer set, put back to the default when routing is turned off.
     private static let appliedKey = "smartRouting.applied"
 
-    static var isOn: Bool { UserDefaults.standard.bool(forKey: storageKey) }
+    static var mode: Mode {
+        let defaults = UserDefaults.standard
+        if let mode = defaults.string(forKey: Mode.storageKey).flatMap(Mode.init) { return mode }
+        return defaults.bool(forKey: legacyKey) ? .smart : .even
+    }
+
+    static var isOn: Bool { mode != .even }
 
     /// A provider's accounts in the order they should be used: the soonest weekly reset first, then weeks
     /// that haven't started, then accounts whose week is used up or unknown.
@@ -28,10 +65,16 @@ enum SmartRouting {
     /// and without running out any sooner (filling one account at a time bunches up its session limits).
     /// Already routing, it keeps on for less, so the proxy's priorities don't flip back and forth.
     static func gain(_ routed: Runway, over even: Runway, alreadyRouting: Bool) -> Double? {
-        let gain = even.unusedAtReset - routed.unusedAtReset
+        let gain = rawGain(routed, over: even)
         guard gain >= (alreadyRouting ? 0.5 : 2) else { return nil }
         if let routedOut = routed.runsOutAt, routedOut < even.runsOutAt ?? .distantFuture { return nil }
         return gain
+    }
+
+    /// Weekly quota routing in order keeps from going unused, in percent of one account's week; below 0 when it
+    /// wastes more than an even split.
+    static func rawGain(_ routed: Runway, over even: Runway) -> Double {
+        even.unusedAtReset - routed.unusedAtReset
     }
 
     /// Brings the proxy's priorities in line with `order` (provider ID to account IDs, first used first):

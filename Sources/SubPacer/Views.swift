@@ -712,14 +712,16 @@ struct RunwayRow: View {
                 EmailText(email: email, text: String(email.prefix { $0 != "@" }))
                     .foregroundStyle(index == 0 ? .primary : .secondary)
             }
-            Text("· saves \(Int(gain.rounded()))% of a week")
+            Text(RoutingCopy.effect(gain: gain, forced: runway.routingForced))
                 .foregroundStyle(.secondary)
                 .layoutPriority(1)
             Spacer(minLength: 0)
         }
         .font(.system(size: 10.5))
         .lineLimit(1)
-        .help("Smart routing: the proxy uses these accounts in this order, soonest weekly reset first, instead of evenly")
+        .help(runway.routingForced
+            ? "Routing in order: the proxy always uses these accounts in this order, soonest weekly reset first"
+            : "Smart routing: the proxy uses these accounts in this order, soonest weekly reset first, instead of evenly")
     }
 
     @ViewBuilder
@@ -1034,7 +1036,7 @@ struct ConnectionCard: View {
     @State private var working = false
     @State private var message: (text: String, isError: Bool)?
     @AppStorage(Connection.Source.storageKey) private var source = Connection.Source.both
-    @AppStorage(SmartRouting.storageKey) private var smartRouting = false
+    @State private var routingMode = SmartRouting.mode
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1077,7 +1079,8 @@ struct ConnectionCard: View {
             message = nil
             Task { await store.sourceChanged() }
         }
-        .onChange(of: smartRouting) {
+        .onChange(of: routingMode) {
+            UserDefaults.standard.set(routingMode.rawValue, forKey: SmartRouting.Mode.storageKey)
             Task { await store.refresh() }
         }
     }
@@ -1089,21 +1092,24 @@ struct ConnectionCard: View {
             Image(systemName: "arrow.triangle.branch")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
-            Text("Smart routing")
+            Text("Routing")
                 .font(.system(size: 12, weight: .semibold))
-            Spacer()
-            Toggle("Smart routing", isOn: $smartRouting)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.mini)
+                .fixedSize()
+            Spacer(minLength: 8)
+            Picker("Routing", selection: $routingMode) {
+                ForEach(SmartRouting.Mode.allCases) { Text($0.title).tag($0) }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .controlSize(.small)
         }
-        Text("When an even split would leave quota unused at a weekly reset, the proxy uses the account that resets soonest first, then the next. Sets each account's priority in the proxy; turning this off puts them back.")
+        Text(routingMode.summary + (routingMode == .even ? " Priorities SubPacer set before go back to 0." : " Sets each account's priority in the proxy; Even puts them back."))
             .font(.system(size: 10.5))
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
-        if smartRouting, let error = store.routingError {
+        if routingMode != .even, let error = store.routingError {
             Banner(text: error, symbol: "exclamationmark.triangle.fill", tint: Palette.warning)
-        } else if smartRouting {
+        } else if routingMode != .even {
             ForEach(routingStatus, id: \.self) { line in
                 Text(line)
                     .font(.system(size: 10.5))
@@ -1162,7 +1168,8 @@ struct ConnectionCard: View {
             guard store.accounts.filter({ $0.providerID == runway.providerID && $0.source == .proxy }).count > 1 else { return nil }
             let name = runway.provider?.displayName ?? runway.providerID.capitalized
             guard let gain = runway.routingGain else { return "\(name): shared evenly, nothing would go unused" }
-            return "\(name): soonest reset first, saves \(Int(gain.rounded()))% of a week"
+            let effect = RoutingCopy.effect(gain: gain, forced: runway.routingForced)
+            return "\(name): soonest reset first" + (effect.isEmpty ? "" : ", " + effect.dropFirst(2))
         }
     }
 
@@ -1607,5 +1614,14 @@ enum ResetFormatter {
         Calendar.current.isDateInToday(date)
             ? date.formatted(date: .omitted, time: .shortened)
             : date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+    }
+}
+
+/// What routing in order does to the quota left unused at weekly resets, as the Runway words it.
+enum RoutingCopy {
+    static func effect(gain: Double, forced: Bool) -> String {
+        let percent = Int(abs(gain).rounded())
+        if percent == 0 { return forced ? "· same as an even split" : "" }
+        return gain > 0 ? "· saves \(percent)% of a week" : "· wastes \(percent)% of a week more"
     }
 }

@@ -30,12 +30,15 @@ struct Runway: Identifiable, Sendable {
     /// Per account ID: how its current weekly window ends at your usual pace, with the load shared across the pool.
     let weeklyOutcomes: [String: Projection.Outcome]
     /// With smart routing using the accounts one at a time: how much weekly quota, in percent of one
-    /// account's week, it keeps from resetting unused compared with an even split.
+    /// account's week, it keeps from resetting unused compared with an even split. Below 0 when routing
+    /// is forced on and wastes more than an even split would.
     var routingGain: Double?
     /// The emails of the accounts smart routing uses, first used first.
     var routeOrder: [String] = []
     /// Smart routing is on and has accounts to order, routed or not.
     var routingEnabled = false
+    /// Routed in order because the setting says always, not because the forecast showed it saves quota.
+    var routingForced = false
 
     var routed: Bool { routingGain != nil }
 

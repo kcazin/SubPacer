@@ -50,9 +50,9 @@ with every request. Plain `http://` is only accepted for `localhost`. Set `allow
 
 ## Security and privacy
 
-- **Smart routing only sets priorities.** With it on, SubPacer writes each Claude and Codex account's `priority`
+- **Routing only sets priorities.** Set to Smart or In order, SubPacer writes each Claude and Codex account's `priority`
   through `/v0/management/auth-files/fields` (n for the account to use first of n, down to 1), which the proxy keeps
-  in the auth file. It overwrites priorities you set yourself on those accounts, and turning it off sets the ones it
+  in the auth file. It overwrites priorities you set yourself on those accounts, and setting it to Even sets the ones it
   changed back to 0. It needs a CLIProxyAPI recent enough to have that endpoint.
 - **Tokens stay in the proxy.** Quota requests go through the proxy's `/v0/management/api-call`, which inserts each
   account's token server-side. SubPacer never sees a proxy account's credential.
@@ -86,7 +86,7 @@ xattr -dr com.apple.quarantine /Applications/SubPacer.app
 
 | Setting | How |
 | --- | --- |
-| Smart routing | Settings, or `defaults write dev.killian.subpacer smartRouting -bool true` |
+| Routing | Settings, or `defaults write dev.killian.subpacer routingMode smart` (`even`, `smart`, `ordered`) |
 | Account source | Settings, or `defaults write dev.killian.subpacer accountSource local` (`both`, `local`, `proxy`) |
 | Proxy URL | Settings, or `defaults write dev.killian.subpacer proxyURL https://host:8317` |
 | Management key | Settings, or `security add-generic-password -U -s SubPacer -a management-key -w` (prompts for it) |
