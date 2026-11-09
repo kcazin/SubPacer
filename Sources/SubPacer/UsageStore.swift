@@ -30,6 +30,8 @@ struct AccountUsage: Identifiable, Sendable {
     var rateLimited = false
     /// Since when the account has kept failing; see `AccountHealth`.
     var failingSince: Date?
+    /// The account no longer pays for a plan, e.g. a lapsed subscription. It's hidden and routed last.
+    var noPlan = false
 
     /// Failing long enough that routing uses it last.
     func routeDemoted(at now: Date) -> Bool {
@@ -73,6 +75,8 @@ final class UsageStore {
     static let shared = UsageStore()
 
     private(set) var accounts: [AccountUsage] = []
+    /// Accounts left out of `accounts` because they no longer pay for a plan.
+    private(set) var hiddenNoPlan: [AccountUsage] = []
     /// One per provider, pooling its accounts. Same order as `accounts`.
     private(set) var runways: [Runway] = []
     private(set) var proxyError: String?
@@ -155,16 +159,24 @@ final class UsageStore {
 
         let now = Date()
         let backoff = backoffUntil.filter { $0.value > now }
+        let plans = planChecks
+        // The plan as last checked, and whether it's time to ask again.
+        func plan(_ id: String) -> (noPlan: Bool, recheck: Bool) {
+            guard let check = plans[id] else { return (false, true) }
+            return (check.noPlan, now.timeIntervalSince(check.at) >= Self.planRecheck)
+        }
         let fetched = await withTaskGroup(of: FetchResult.self) { group in
             if let client = proxy?.client {
                 for file in tracked {
                     let skipUntil = file.authIndex.flatMap { backoff[$0] }
-                    group.addTask { await Self.fetchUsage(file, client: client, skipUntil: skipUntil) }
+                    let plan = plan(file.authIndex ?? file.name)
+                    group.addTask { await Self.fetchUsage(file, client: client, skipUntil: skipUntil, plan: plan) }
                 }
             }
             for login in local {
                 let skipUntil = backoff[login.id]
-                group.addTask { await Self.fetchUsage(login, skipUntil: skipUntil) }
+                let plan = plan(login.id)
+                group.addTask { await Self.fetchUsage(login, skipUntil: skipUntil, plan: plan) }
             }
             var results: [FetchResult] = []
             for await result in group { results.append(result) }
@@ -177,7 +189,10 @@ final class UsageStore {
             if let retryAfter = result.retryAfter {
                 backoffUntil[usage.id] = Date().addingTimeInterval(retryAfter)
             }
-            if usage.error == nil && usage.notice == nil {
+            if result.planChecked { planChecks[usage.id] = (usage.noPlan, now) }
+            if usage.noPlan {
+                // Its usage isn't read, so there are no numbers to keep.
+            } else if usage.error == nil && usage.notice == nil {
                 lastGood[usage.id] = usage.snapshot
             } else if let previous = lastGood[usage.id] {
                 // Keep showing the last known numbers; the error or notice explains why they're stale.
@@ -214,15 +229,16 @@ final class UsageStore {
         // Accounts that keep failing go last in every order, so the next account takes over for good.
         let failingSince = AccountHealth.update(merged, observed: Set(tracked.compactMap(\.authIndex)), now: recordedAt)
         for index in merged.indices { merged[index].failingSince = failingSince[merged[index].id] }
-        let demoted = Set(merged.filter { $0.routeDemoted(at: recordedAt) }.map(\.id))
+        let demoted = Set(merged.filter { $0.noPlan || $0.routeDemoted(at: recordedAt) }.map(\.id))
         for providerID in providerOrder {
-            let accounts = merged.filter { $0.providerID == providerID }
-            let proxied = accounts.filter { $0.source == .proxy }
+            // Accounts without a plan only take part in routing, to keep them last.
+            let accounts = merged.filter { $0.providerID == providerID && !$0.noPlan }
+            let proxied = merged.filter { $0.providerID == providerID && $0.source == .proxy }
             var order = SmartRouting.order(proxied, mode: mode, now: recordedAt).map(\.id)
             // An account whose usage can't be read has no reset to sort by; rather than reshuffle the
             // proxy's priorities on every refresh or launch, keep the order from last time.
             let previous = SmartRouting.lastOrder[providerID] ?? []
-            if proxied.contains(where: { $0.weeklyWindow == nil }), Set(previous) == Set(order) {
+            if proxied.contains(where: { $0.weeklyWindow == nil && !$0.noPlan }), Set(previous) == Set(order) {
                 order = previous
                 if mode == .pinned, let email = SmartRouting.pins[providerID],
                    let pinned = proxied.first(where: { $0.email == email }), let at = order.firstIndex(of: pinned.id) {
@@ -231,10 +247,12 @@ final class UsageStore {
             }
             order = order.filter { !demoted.contains($0) } + order.filter { demoted.contains($0) }
             let enabled = mode != .even && source.usesProxy && proxied.count > 1
+            // Only one account left to show: routing just keeps the hidden ones last, which forecasts nothing.
+            let shown = enabled && accounts.filter { $0.source == .proxy }.count > 1
             // A fixed order doesn't wait on a forecast, e.g. while an account's usage can't be read.
-            if enabled && mode != .smart { routeOrder[providerID] = order }
+            if enabled && (mode != .smart || !shown) { routeOrder[providerID] = order }
             guard let even = forecast(providerID, accounts: accounts, order: nil, now: recordedAt) else { continue }
-            let routedForecast = enabled ? forecast(providerID, accounts: accounts, order: order, resort: mode.resort, now: recordedAt) : nil
+            let routedForecast = shown ? forecast(providerID, accounts: accounts, order: order, resort: mode.resort, now: recordedAt) : nil
             let gain: Double? = routedForecast.flatMap { routed in
                 mode == .smart
                     ? SmartRouting.gain(routed, over: even, alreadyRouting: runways.contains { $0.providerID == providerID && $0.routed })
@@ -244,12 +262,12 @@ final class UsageStore {
                 routed.routingGain = gain
                 routed.routingMode = mode
                 routed.routingEnabled = true
-                routed.routeOrder = order.compactMap { id in proxied.first { $0.id == id }?.email }
+                routed.routeOrder = order.compactMap { id in accounts.first { $0.id == id && $0.source == .proxy }?.email }
                 routeOrder[providerID] = order
                 forecasts.append(routed)
             } else {
                 var even = even
-                even.routingEnabled = enabled
+                even.routingEnabled = shown
                 forecasts.append(even)
             }
         }
@@ -277,7 +295,8 @@ final class UsageStore {
                 for: merged[index], runway: runways.first { $0.providerID == merged[index].providerID }, now: recordedAt
             )
         }
-        accounts = merged
+        accounts = merged.filter { !$0.noPlan }
+        hiddenNoPlan = merged.filter(\.noPlan)
         lastUpdated = Date()
     }
 
@@ -360,8 +379,10 @@ final class UsageStore {
             // Another proxy means other accounts; drop what belonged to the old one.
             accounts = accounts.filter { $0.source == .local }
             runways = []
+            hiddenNoPlan = hiddenNoPlan.filter { $0.source == .local }
             lastGood = lastGood.filter { $0.key.hasPrefix("local.") }
             backoffUntil = backoffUntil.filter { $0.key.hasPrefix("local.") }
+            planChecks = planChecks.filter { $0.key.hasPrefix("local.") }
         }
         await refresh()
     }
@@ -385,13 +406,32 @@ final class UsageStore {
     private let activity = ActivityLog()
     private var backoffUntil: [String: Date] = [:]
     private var lastGood: [String: QuotaSnapshot] = [:]
+    /// Per account ID, whether it was last found without a plan, and when.
+    private var planChecks: [String: (noPlan: Bool, at: Date)] = [:]
+    /// Subscriptions rarely change, so the plan is asked about this often.
+    private static let planRecheck: TimeInterval = 6 * 3600
 
     private struct FetchResult: Sendable {
         var usage: AccountUsage
         var retryAfter: TimeInterval?
+        /// `usage.noPlan` is a fresh answer, to keep until the next recheck.
+        var planChecked = false
     }
 
-    nonisolated private static func fetchUsage(_ file: AuthFile, client: ManagementClient, skipUntil: Date?) async -> FetchResult {
+    private typealias Call = @Sendable (_ url: String, _ headers: [String: String]) async throws -> (status: Int, body: Data, retryAfter: TimeInterval?)
+
+    /// Asks the provider whether the account pays for a plan when it's time to, and otherwise goes by the last
+    /// answer. Returns whether that's a fresh answer. An unanswered question is asked again on the next refresh.
+    nonisolated private static func checkPlan(_ usage: inout AccountUsage, provider: any QuotaProvider.Type, plan: (noPlan: Bool, recheck: Bool), call: Call) async -> Bool {
+        usage.noPlan = plan.noPlan
+        guard plan.recheck, let request = provider.planRequest else { return false }
+        guard let response = try? await call(request.url, request.headers), (200..<300).contains(response.status),
+              let paid = provider.hasPlan(profile: response.body) else { return false }
+        usage.noPlan = !paid
+        return true
+    }
+
+    nonisolated private static func fetchUsage(_ file: AuthFile, client: ManagementClient, skipUntil: Date?, plan: (noPlan: Bool, recheck: Bool)) async -> FetchResult {
         var usage = AccountUsage(
             id: file.authIndex ?? file.name,
             providerID: file.providerID,
@@ -406,6 +446,11 @@ final class UsageStore {
         guard let provider = QuotaProviders.provider(for: file.providerID), let authIndex = file.authIndex else {
             return FetchResult(usage: usage)
         }
+        let planChecked = await checkPlan(&usage, provider: provider, plan: plan) { url, headers in
+            try await client.apiCall(authIndex: authIndex, url: url, headers: headers)
+        }
+        // Without a plan there's no usage to read, unless usage is how the provider tells.
+        if usage.noPlan && provider.planRequest != nil { return FetchResult(usage: usage, planChecked: planChecked) }
         if let skipUntil {
             usage.error = rateLimitMessage(provider, until: skipUntil)
             usage.rateLimited = true
@@ -419,6 +464,10 @@ final class UsageStore {
             case 200..<300:
                 usage.snapshot = try provider.parse(response.body)
                 if usage.snapshot.plan == nil, let plan = file.idToken?.planType { usage.snapshot.plan = plan.capitalized }
+                if let paid = provider.hasPlan(usage.snapshot) {
+                    usage.noPlan = !paid
+                    return FetchResult(usage: usage, planChecked: true)
+                }
             case 401, 403:
                 usage.error = "Login expired. \(provider.reloginHint)"
             case 429:
@@ -435,10 +484,16 @@ final class UsageStore {
         return FetchResult(usage: usage)
     }
 
-    nonisolated private static func fetchUsage(_ login: LocalLogin, skipUntil: Date?) async -> FetchResult {
+    nonisolated private static func fetchUsage(_ login: LocalLogin, skipUntil: Date?, plan: (noPlan: Bool, recheck: Bool)) async -> FetchResult {
         var usage = AccountUsage(id: login.id, providerID: login.providerID, email: login.email ?? login.cliName)
         usage.source = .local
         guard let provider = QuotaProviders.provider(for: login.providerID) else { return FetchResult(usage: usage) }
+        // An expired token can't be asked; the last answer stands until the CLI renews it.
+        let planChecked = await checkPlan(&usage, provider: provider, plan: login.isExpired(at: Date()) ? (plan.noPlan, false) : plan) { url, headers in
+            try await LocalLogins.fetch(login, url: url, headers: headers)
+        }
+        // Without a plan there's no usage to read, unless usage is how the provider tells.
+        if usage.noPlan && provider.planRequest != nil { return FetchResult(usage: usage, planChecked: planChecked) }
         if let skipUntil {
             usage.error = rateLimitMessage(provider, until: skipUntil)
             usage.rateLimited = true
@@ -456,6 +511,10 @@ final class UsageStore {
             case 200..<300:
                 usage.snapshot = try provider.parse(response.body)
                 if usage.snapshot.plan == nil { usage.snapshot.plan = login.plan }
+                if let paid = provider.hasPlan(usage.snapshot) {
+                    usage.noPlan = !paid
+                    return FetchResult(usage: usage, planChecked: true)
+                }
             case 401 where login.expiresAt == nil:
                 usage.notice = waiting
             case 401, 403:

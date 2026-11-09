@@ -60,6 +60,9 @@ enum DebugSnapshot {
                 let windows = account.snapshot.windows.map { "\($0.label)=\(Int($0.usedPercent))%" }.joined(separator: ", ")
                 print("\(account.providerID) \(account.email) error=\(account.error ?? "-") route=\(account.routeRank.map(String.init) ?? "-") failingSince=\(account.failingSince.map { $0.formatted() } ?? "-") [\(windows)]")
             }
+            for account in store.hiddenNoPlan {
+                print("\(account.providerID) \(account.email) hidden: no plan route=\(account.routeRank.map(String.init) ?? "-")")
+            }
             for runway in store.runways {
                 let outages = runway.outages.map { "\($0.window) \($0.interval.start.formatted())–\($0.interval.end.formatted())" }
                 print("runway \(runway.providerID) accounts=\(runway.accountCount) horizon=\(runway.horizon.formatted()) headroom=\(runway.headroom.map { String(format: "%.2f", $0) } ?? "-") unused=\(String(format: "%.0f", runway.unusedAtReset)) routingGain=\(runway.routingGain.map { String(format: "%.0f", $0) } ?? "-") outages=\(outages)")

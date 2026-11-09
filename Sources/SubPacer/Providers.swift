@@ -49,6 +49,18 @@ protocol QuotaProvider {
     static func request(accountID: String?) -> (url: String, headers: [String: String])
     static func parse(_ data: Data) throws -> QuotaSnapshot
     static var reloginHint: String { get }
+    /// Where to ask whether the account still pays for a plan, when its usage doesn't say.
+    static var planRequest: (url: String, headers: [String: String])? { get }
+    /// Whether the account pays for a plan, from `planRequest`'s answer; nil when it can't tell.
+    static func hasPlan(profile: Data) -> Bool?
+    /// Whether the account pays for a plan, from its usage; nil when usage doesn't say.
+    static func hasPlan(_ snapshot: QuotaSnapshot) -> Bool?
+}
+
+extension QuotaProvider {
+    static var planRequest: (url: String, headers: [String: String])? { nil }
+    static func hasPlan(profile: Data) -> Bool? { nil }
+    static func hasPlan(_ snapshot: QuotaSnapshot) -> Bool? { nil }
 }
 
 enum QuotaProviders {
@@ -80,6 +92,20 @@ enum ClaudeQuota: QuotaProvider {
             "Accept": "application/json",
             "User-Agent": "claude-cli/\(ClaudeCodeVersion.installed) (external, cli)",
         ])
+    }
+
+    /// A lapsed subscription still answers usage, with a 429 that never clears, so the profile tells.
+    static var planRequest: (url: String, headers: [String: String])? {
+        let usage = request(accountID: nil)
+        return ("https://api.anthropic.com/api/oauth/profile", usage.headers)
+    }
+
+    /// An account without a subscription belongs to a `claude_free` organization; Pro, Max, Team and
+    /// Enterprise each have their own type.
+    static func hasPlan(profile: Data) -> Bool? {
+        guard let object = try? JSONSerialization.jsonObject(with: profile) as? [String: Any],
+              let type = (object["organization"] as? [String: Any])?["organization_type"] as? String else { return nil }
+        return type != "claude_free"
     }
 
     private static let labels: [String: String] = [
@@ -187,6 +213,11 @@ enum CodexQuota: QuotaProvider {
             }
         }
         return snapshot
+    }
+
+    /// A ChatGPT subscription that lapses leaves the account on the free plan.
+    static func hasPlan(_ snapshot: QuotaSnapshot) -> Bool? {
+        snapshot.plan.map { $0.lowercased() != "free" }
     }
 
     private static func windows(from limits: [String: Any], prefix: String?, isPrimary: Bool) -> [QuotaWindow] {

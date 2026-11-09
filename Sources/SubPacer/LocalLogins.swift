@@ -28,6 +28,12 @@ enum LocalLogins {
     /// The same request the proxy would make, with the token filled in here.
     static func fetch(_ login: LocalLogin, provider: any QuotaProvider.Type) async throws -> (status: Int, body: Data, retryAfter: TimeInterval?) {
         let request = provider.request(accountID: login.accountID)
+        return try await fetch(login, url: request.url, headers: request.headers)
+    }
+
+    /// A request to the provider with this login's token in place of `$TOKEN$`.
+    static func fetch(_ login: LocalLogin, url: String, headers: [String: String]) async throws -> (status: Int, body: Data, retryAfter: TimeInterval?) {
+        let request = (url: url, headers: headers)
         guard let url = URL(string: request.url) else { throw URLError(.badURL) }
         var urlRequest = URLRequest(url: url)
         urlRequest.timeoutInterval = 20

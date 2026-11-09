@@ -116,6 +116,9 @@ struct UsagePanel: View {
             ForEach(store.accounts) { account in
                 AccountCard(account: account)
             }
+            if !store.hiddenNoPlan.isEmpty {
+                HiddenAccountsNote(accounts: store.hiddenNoPlan)
+            }
         }
         if store.accounts.isEmpty && store.proxyError == nil {
             ProgressView()
@@ -1710,5 +1713,30 @@ enum RoutingCopy {
         let percent = Int(abs(gain).rounded())
         if percent == 0 { return forced ? "· same as an even split" : "" }
         return gain > 0 ? "· saves \(percent)% of a week" : "· wastes \(percent)% of a week more"
+    }
+}
+
+/// Accounts left out of the panel because they no longer pay for a plan.
+struct HiddenAccountsNote: View {
+    let accounts: [AccountUsage]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "eye.slash")
+            if accounts.count == 1, let account = accounts.first {
+                EmailText(email: account.email)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("hidden, no \(account.displayName) subscription")
+                    .fixedSize()
+            } else {
+                Text("\(accounts.count) accounts without a subscription hidden")
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 10.5))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .help("Their plan has lapsed, so they're left out of the panel and the Runway, and the proxy uses them last. They come back once subscribed again (checked every 6 hours).")
     }
 }

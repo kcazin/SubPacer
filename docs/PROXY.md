@@ -55,6 +55,10 @@ with every request. Plain `http://` is only accepted for `localhost`. Set `allow
   in the auth file. It overwrites priorities you set yourself on those accounts, and setting it to Even split sets the ones it
   changed back to 0. An account whose usage or proxy requests keep failing for 3 hours (not just the usage API's rate limiting) gets
   the lowest priority until it works again. It needs a CLIProxyAPI recent enough to have that endpoint.
+- **Accounts without a subscription are hidden.** Every 6 hours SubPacer asks Anthropic's `/api/oauth/profile` whether
+  each Claude account still has a plan (a lapsed one only gets 429s from the usage API); a Codex account on the free
+  plan counts too. Those are left out of the panel and the Runway, with a note under the accounts, and routing uses
+  them last. They come back once subscribed again.
 - **Tokens stay in the proxy.** Quota requests go through the proxy's `/v0/management/api-call`, which inserts each
   account's token server-side. SubPacer never sees a proxy account's credential.
 - **CLI logins are only read.** The Claude Code and Codex tokens on this Mac are read on each refresh, sent only to
