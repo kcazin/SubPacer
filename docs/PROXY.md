@@ -47,10 +47,9 @@ time you use it. The Tonight card learns your hours from proxy traffic, so witho
 
 Gemini accounts come from the proxy's Antigravity logins (`cliproxyapi -antigravity-login`); there's no local
 Gemini login to read. SubPacer asks Antigravity's `v1internal:fetchAvailableModels` for each account's project,
-through `/api-call` like the others. Each model reports the share of its quota left and when it refills, and models
-share a pool per maker: the card's **Session** is the Gemini pool (5 hours from first use; a reset further out is
-shown as **Weekly**), which drives the menu bar and the Runway, and the Claude and GPT-OSS pools Antigravity also
-serves show below it.
+through `/api-call` like the others. Each model reports the share of its quota left and when it refills; the Gemini
+models share one pool, shown as **Session** (it refills 5 hours after first use). Google reports no weekly quota, so a
+reset further out shows as **Weekly**. The Claude and GPT-OSS models Antigravity also serves are left out.
 
 ## A proxy on another machine
 

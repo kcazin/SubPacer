@@ -267,7 +267,7 @@ enum CodexQuota: QuotaProvider {
 // MARK: - Gemini
 
 /// Gemini through the proxy's Antigravity logins. Each model reports the fraction of its quota left and
-/// when it refills; models share a pool per maker, so a pool is its most used model.
+/// when it refills; the Gemini models share one pool, so it's the most used of them.
 enum GeminiQuota: QuotaProvider {
     static let id = "antigravity"
     static let displayName = "Gemini"
@@ -293,43 +293,34 @@ enum GeminiQuota: QuotaProvider {
         )
     }
 
-    /// Pools by `modelProvider`; only Gemini's counts toward the menu bar and the Runway.
-    private static let pools: [(provider: String, id: String, label: String, primary: Bool)] = [
-        ("MODEL_PROVIDER_GOOGLE", "gemini", "Gemini", true),
-        ("MODEL_PROVIDER_ANTHROPIC", "claude", "Claude", false),
-        ("MODEL_PROVIDER_OPENAI", "gpt-oss", "GPT-OSS", false),
-    ]
     static let session: TimeInterval = 5 * 3600
 
+    /// Only the Gemini models, which share one pool; the Claude and GPT-OSS models Antigravity also serves are
+    /// left out, as are internal ones like autocomplete.
     static func parse(_ data: Data) throws -> QuotaSnapshot {
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let models = object["models"] as? [String: [String: Any]] else { throw ParseError() }
-        let now = Date()
-        var windows: [QuotaWindow] = []
-        for pool in pools {
-            // Models without a reset time are internal (autocomplete) and never run out.
-            let usage: [(used: Double, resetsAt: Date)] = models.values.compactMap { model in
-                guard model["modelProvider"] as? String == pool.provider,
-                      let quota = model["quotaInfo"] as? [String: Any],
-                      let reset = (quota["resetTime"] as? String).flatMap(DateParsing.iso8601) else { return nil }
-                // An exhausted model drops `remainingFraction`.
-                let left = (quota["remainingFraction"] as? NSNumber)?.doubleValue ?? 0
-                return (min(100, max(0, (1 - left) * 100)), reset)
-            }
-            guard let tightest = usage.max(by: { ($0.used, -$0.resetsAt.timeIntervalSince1970) < ($1.used, -$1.resetsAt.timeIntervalSince1970) }) else { continue }
-            // Pools refill 5 hours after first use; a reset further out is a weekly lockout.
-            let length = tightest.resetsAt.timeIntervalSince(now) > session + 600 ? 7 * 86_400 : session
-            windows.append(QuotaWindow(
-                id: pool.id,
-                label: pool.primary ? (length == session ? "Session" : "Weekly") : pool.label,
-                usedPercent: tightest.used,
-                resetsAt: tightest.resetsAt,
-                windowLength: length,
-                isPrimary: pool.primary
-            ))
+        let usage: [(used: Double, resetsAt: Date)] = models.compactMap { id, model in
+            guard id.hasPrefix("gemini-"), model["modelProvider"] as? String == "MODEL_PROVIDER_GOOGLE",
+                  let quota = model["quotaInfo"] as? [String: Any],
+                  let reset = (quota["resetTime"] as? String).flatMap(DateParsing.iso8601) else { return nil }
+            // An exhausted model drops `remainingFraction`.
+            let left = (quota["remainingFraction"] as? NSNumber)?.doubleValue ?? 0
+            return (min(100, max(0, (1 - left) * 100)), reset)
         }
-        guard !windows.isEmpty else { throw ParseError() }
-        return QuotaSnapshot(windows: windows)
+        guard let tightest = usage.max(by: { ($0.used, -$0.resetsAt.timeIntervalSince1970) < ($1.used, -$1.resetsAt.timeIntervalSince1970) }) else {
+            throw ParseError()
+        }
+        // Google only reports the pool that refills 5 hours after first use; a reset further out is a weekly lockout.
+        let length = tightest.resetsAt.timeIntervalSinceNow > session + 600 ? 7 * 86_400 : session
+        return QuotaSnapshot(windows: [QuotaWindow(
+            id: "gemini",
+            label: length == session ? "Session" : "Weekly",
+            usedPercent: tightest.used,
+            resetsAt: tightest.resetsAt,
+            windowLength: length,
+            isPrimary: true
+        )])
     }
 }
 
