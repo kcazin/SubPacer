@@ -43,6 +43,15 @@ The tokens are only read. Renewing one would rotate it and sign the CLI out, so 
 time you use it. The Tonight card learns your hours from proxy traffic, so without a proxy it keeps assuming
 23:00–08:00.
 
+## Gemini
+
+Gemini accounts come from the proxy's Antigravity logins (`cliproxyapi -antigravity-login`); there's no local
+Gemini login to read. SubPacer asks Antigravity's `v1internal:fetchAvailableModels` for each account's project,
+through `/api-call` like the others. Each model reports the share of its quota left and when it refills, and models
+share a pool per maker: the card's **Session** is the Gemini pool (5 hours from first use; a reset further out is
+shown as **Weekly**), which drives the menu bar and the Runway, and the Claude and GPT-OSS pools Antigravity also
+serves show below it.
+
 ## A proxy on another machine
 
 It must be reached over `https://` (for example behind a reverse proxy or `tailscale serve`), since the key is sent
@@ -50,7 +59,7 @@ with every request. Plain `http://` is only accepted for `localhost`. Set `allow
 
 ## Security and privacy
 
-- **Routing only sets priorities.** Set to anything but Even split, SubPacer writes each Claude and Codex account's `priority`
+- **Routing only sets priorities.** Set to anything but Even split, SubPacer writes each Claude, Codex and Gemini account's `priority`
   through `/v0/management/auth-files/fields` (n for the account to use first of n, down to 1), which the proxy keeps
   in the auth file. It overwrites priorities you set yourself on those accounts, and setting it to Even split sets the ones it
   changed back to 0. An account whose usage or proxy requests keep failing for 3 hours (not just the usage API's rate limiting) gets

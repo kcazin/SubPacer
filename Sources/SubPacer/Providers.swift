@@ -39,18 +39,34 @@ struct ResetGrant: Identifiable, Hashable, Sendable {
     var isAvailable: Bool { resetsLeft > 0 && !paused }
 }
 
-/// Knows how to ask a provider for quota and how to read the answer. Requests carry `$TOKEN$`,
-/// which the proxy fills in server-side, or `LocalLogins` does for a login on this Mac.
+/// A request to a provider's API. Headers carry `$TOKEN$`, which the proxy fills in server-side,
+/// or `LocalLogins` does for a login on this Mac.
+struct QuotaRequest: Sendable {
+    var url: String
+    var headers: [String: String]
+    var method = "GET"
+    var body: String?
+}
+
+/// What identifies an account to its provider beyond the token.
+struct AccountKeys: Sendable {
+    /// Codex's ChatGPT account, sent as `ChatGPT-Account-Id`.
+    var accountID: String?
+    /// The Google Cloud project Gemini bills the account's quota to.
+    var projectID: String?
+}
+
+/// Knows how to ask a provider for quota and how to read the answer.
 protocol QuotaProvider {
     static var id: String { get }
     static var displayName: String { get }
     static var symbol: String { get }
     static var tint: Color { get }
-    static func request(accountID: String?) -> (url: String, headers: [String: String])
+    static func request(for account: AccountKeys) -> QuotaRequest
     static func parse(_ data: Data) throws -> QuotaSnapshot
     static var reloginHint: String { get }
     /// Where to ask whether the account still pays for a plan, when its usage doesn't say.
-    static var planRequest: (url: String, headers: [String: String])? { get }
+    static var planRequest: QuotaRequest? { get }
     /// Whether the account pays for a plan, from `planRequest`'s answer; nil when it can't tell.
     static func hasPlan(profile: Data) -> Bool?
     /// Whether the account pays for a plan, from its usage; nil when usage doesn't say.
@@ -58,13 +74,13 @@ protocol QuotaProvider {
 }
 
 extension QuotaProvider {
-    static var planRequest: (url: String, headers: [String: String])? { nil }
+    static var planRequest: QuotaRequest? { nil }
     static func hasPlan(profile: Data) -> Bool? { nil }
     static func hasPlan(_ snapshot: QuotaSnapshot) -> Bool? { nil }
 }
 
 enum QuotaProviders {
-    static let all: [any QuotaProvider.Type] = [ClaudeQuota.self, CodexQuota.self]
+    static let all: [any QuotaProvider.Type] = [ClaudeQuota.self, CodexQuota.self, GeminiQuota.self]
 
     static func provider(for id: String) -> (any QuotaProvider.Type)? {
         all.first { $0.id == id }
@@ -84,9 +100,9 @@ enum ClaudeQuota: QuotaProvider {
     static let tint = Color(red: 0.85, green: 0.47, blue: 0.34)
     static let reloginHint = "Run `cliproxyapi -claude-login` to sign in again."
 
-    static func request(accountID: String?) -> (url: String, headers: [String: String]) {
+    static func request(for account: AccountKeys) -> QuotaRequest {
         // `cedar_ember=1` adds limit-reset grants, which are only offered to a recent Claude Code.
-        ("https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1", [
+        QuotaRequest(url: "https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1", headers: [
             "Authorization": "Bearer $TOKEN$",
             "anthropic-beta": "oauth-2025-04-20",
             "Accept": "application/json",
@@ -95,9 +111,8 @@ enum ClaudeQuota: QuotaProvider {
     }
 
     /// A lapsed subscription still answers usage, with a 429 that never clears, so the profile tells.
-    static var planRequest: (url: String, headers: [String: String])? {
-        let usage = request(accountID: nil)
-        return ("https://api.anthropic.com/api/oauth/profile", usage.headers)
+    static var planRequest: QuotaRequest? {
+        QuotaRequest(url: "https://api.anthropic.com/api/oauth/profile", headers: request(for: AccountKeys()).headers)
     }
 
     /// An account without a subscription belongs to a `claude_free` organization; Pro, Max, Team and
@@ -181,16 +196,16 @@ enum CodexQuota: QuotaProvider {
     static let tint = Color(red: 0.25, green: 0.55, blue: 0.95)
     static let reloginHint = "Run `cliproxyapi -codex-login` to sign in again."
 
-    static func request(accountID: String?) -> (url: String, headers: [String: String]) {
+    static func request(for account: AccountKeys) -> QuotaRequest {
         var headers = [
             "Authorization": "Bearer $TOKEN$",
             "Accept": "application/json",
             "User-Agent": "codex_cli_rs",
         ]
-        if let accountID {
+        if let accountID = account.accountID {
             headers["ChatGPT-Account-Id"] = accountID
         }
-        return ("https://chatgpt.com/backend-api/wham/usage", headers)
+        return QuotaRequest(url: "https://chatgpt.com/backend-api/wham/usage", headers: headers)
     }
 
     static func parse(_ data: Data) throws -> QuotaSnapshot {
@@ -246,6 +261,75 @@ enum CodexQuota: QuotaProvider {
         case ..<86_400: "\(seconds / 3600)h"
         default: "\(seconds / 86_400)d"
         }
+    }
+}
+
+// MARK: - Gemini
+
+/// Gemini through the proxy's Antigravity logins. Each model reports the fraction of its quota left and
+/// when it refills; models share a pool per maker, so a pool is its most used model.
+enum GeminiQuota: QuotaProvider {
+    static let id = "antigravity"
+    static let displayName = "Gemini"
+    static let symbol = "sparkle"
+    static let tint = Color(red: 0.55, green: 0.42, blue: 0.95)
+    static let reloginHint = "Run `cliproxyapi -antigravity-login` to sign in again."
+
+    /// The endpoint the proxy itself sends Antigravity requests to; the production one reports every
+    /// pool as unused.
+    static func request(for account: AccountKeys) -> QuotaRequest {
+        let body = (try? JSONSerialization.data(withJSONObject: account.projectID.map { ["project": $0] } ?? [:]))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        return QuotaRequest(
+            url: "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+            headers: [
+                "Authorization": "Bearer $TOKEN$",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "antigravity/1.15.8 darwin/arm64",
+            ],
+            method: "POST",
+            body: body
+        )
+    }
+
+    /// Pools by `modelProvider`; only Gemini's counts toward the menu bar and the Runway.
+    private static let pools: [(provider: String, id: String, label: String, primary: Bool)] = [
+        ("MODEL_PROVIDER_GOOGLE", "gemini", "Gemini", true),
+        ("MODEL_PROVIDER_ANTHROPIC", "claude", "Claude", false),
+        ("MODEL_PROVIDER_OPENAI", "gpt-oss", "GPT-OSS", false),
+    ]
+    static let session: TimeInterval = 5 * 3600
+
+    static func parse(_ data: Data) throws -> QuotaSnapshot {
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let models = object["models"] as? [String: [String: Any]] else { throw ParseError() }
+        let now = Date()
+        var windows: [QuotaWindow] = []
+        for pool in pools {
+            // Models without a reset time are internal (autocomplete) and never run out.
+            let usage: [(used: Double, resetsAt: Date)] = models.values.compactMap { model in
+                guard model["modelProvider"] as? String == pool.provider,
+                      let quota = model["quotaInfo"] as? [String: Any],
+                      let reset = (quota["resetTime"] as? String).flatMap(DateParsing.iso8601) else { return nil }
+                // An exhausted model drops `remainingFraction`.
+                let left = (quota["remainingFraction"] as? NSNumber)?.doubleValue ?? 0
+                return (min(100, max(0, (1 - left) * 100)), reset)
+            }
+            guard let tightest = usage.max(by: { ($0.used, -$0.resetsAt.timeIntervalSince1970) < ($1.used, -$1.resetsAt.timeIntervalSince1970) }) else { continue }
+            // Pools refill 5 hours after first use; a reset further out is a weekly lockout.
+            let length = tightest.resetsAt.timeIntervalSince(now) > session + 600 ? 7 * 86_400 : session
+            windows.append(QuotaWindow(
+                id: pool.id,
+                label: pool.primary ? (length == session ? "Session" : "Weekly") : pool.label,
+                usedPercent: tightest.used,
+                resetsAt: tightest.resetsAt,
+                windowLength: length,
+                isPrimary: pool.primary
+            ))
+        }
+        guard !windows.isEmpty else { throw ParseError() }
+        return QuotaSnapshot(windows: windows)
     }
 }
 

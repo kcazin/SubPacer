@@ -1,7 +1,7 @@
 <h1 align="center">SubPacer</h1>
 
 <p align="center">
-  <b>Will your Claude and Codex limits last the week?</b><br>
+  <b>Will your Claude, Codex and Gemini limits last the week?</b><br>
   A macOS menu bar app that shows the quota left on every account in your
   <a href="https://github.com/router-for-me/CLIProxyAPI">CLIProxyAPI</a><br>
   and tells you, before it happens, whether your pace runs out first.

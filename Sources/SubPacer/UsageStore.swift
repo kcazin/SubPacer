@@ -418,14 +418,14 @@ final class UsageStore {
         var planChecked = false
     }
 
-    private typealias Call = @Sendable (_ url: String, _ headers: [String: String]) async throws -> (status: Int, body: Data, retryAfter: TimeInterval?)
+    private typealias Call = @Sendable (_ request: QuotaRequest) async throws -> (status: Int, body: Data, retryAfter: TimeInterval?)
 
     /// Asks the provider whether the account pays for a plan when it's time to, and otherwise goes by the last
     /// answer. Returns whether that's a fresh answer. An unanswered question is asked again on the next refresh.
     nonisolated private static func checkPlan(_ usage: inout AccountUsage, provider: any QuotaProvider.Type, plan: (noPlan: Bool, recheck: Bool), call: Call) async -> Bool {
         usage.noPlan = plan.noPlan
         guard plan.recheck, let request = provider.planRequest else { return false }
-        guard let response = try? await call(request.url, request.headers), (200..<300).contains(response.status),
+        guard let response = try? await call(request), (200..<300).contains(response.status),
               let paid = provider.hasPlan(profile: response.body) else { return false }
         usage.noPlan = !paid
         return true
@@ -446,8 +446,8 @@ final class UsageStore {
         guard let provider = QuotaProviders.provider(for: file.providerID), let authIndex = file.authIndex else {
             return FetchResult(usage: usage)
         }
-        let planChecked = await checkPlan(&usage, provider: provider, plan: plan) { url, headers in
-            try await client.apiCall(authIndex: authIndex, url: url, headers: headers)
+        let planChecked = await checkPlan(&usage, provider: provider, plan: plan) { request in
+            try await client.apiCall(authIndex: authIndex, request)
         }
         // Without a plan there's no usage to read, unless usage is how the provider tells.
         if usage.noPlan && provider.planRequest != nil { return FetchResult(usage: usage, planChecked: planChecked) }
@@ -457,9 +457,9 @@ final class UsageStore {
             return FetchResult(usage: usage)
         }
 
-        let request = provider.request(accountID: file.idToken?.chatgptAccountId)
+        let request = provider.request(for: AccountKeys(accountID: file.idToken?.chatgptAccountId, projectID: file.projectId))
         do {
-            let response = try await client.apiCall(authIndex: authIndex, url: request.url, headers: request.headers)
+            let response = try await client.apiCall(authIndex: authIndex, request)
             switch response.status {
             case 200..<300:
                 usage.snapshot = try provider.parse(response.body)
@@ -489,8 +489,8 @@ final class UsageStore {
         usage.source = .local
         guard let provider = QuotaProviders.provider(for: login.providerID) else { return FetchResult(usage: usage) }
         // An expired token can't be asked; the last answer stands until the CLI renews it.
-        let planChecked = await checkPlan(&usage, provider: provider, plan: login.isExpired(at: Date()) ? (plan.noPlan, false) : plan) { url, headers in
-            try await LocalLogins.fetch(login, url: url, headers: headers)
+        let planChecked = await checkPlan(&usage, provider: provider, plan: login.isExpired(at: Date()) ? (plan.noPlan, false) : plan) { request in
+            try await LocalLogins.fetch(login, request)
         }
         // Without a plan there's no usage to read, unless usage is how the provider tells.
         if usage.noPlan && provider.planRequest != nil { return FetchResult(usage: usage, planChecked: planChecked) }

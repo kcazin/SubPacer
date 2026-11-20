@@ -45,9 +45,9 @@ struct ManagementClient: Sendable {
     }
 
     /// Performs an upstream request using the stored credential for `authIndex`.
-    func apiCall(authIndex: String, url: String, headers: [String: String]) async throws -> (status: Int, body: Data, retryAfter: TimeInterval?) {
-        let request = APICallRequest(authIndex: authIndex, method: "GET", url: url, header: headers)
-        let body = try JSONEncoder.snake.encode(request)
+    func apiCall(authIndex: String, _ request: QuotaRequest) async throws -> (status: Int, body: Data, retryAfter: TimeInterval?) {
+        let call = APICallRequest(authIndex: authIndex, method: request.method, url: request.url, header: request.headers, data: request.body)
+        let body = try JSONEncoder.snake.encode(call)
         let data = try await send(path: "api-call", method: "POST", body: body)
         let response = try JSONDecoder.snake.decode(APICallResponse.self, from: data)
         let retryAfter = response.header?.first { $0.key.lowercased() == "retry-after" }?.value.first.flatMap(TimeInterval.init)
@@ -122,6 +122,8 @@ struct AuthFile: Decodable {
     let failed: Int?
     let recentRequests: [Bucket]?
     let idToken: IDToken?
+    /// The Google Cloud project of a Gemini (Antigravity) login.
+    let projectId: String?
 
     struct Bucket: Decodable {
         let time: String
@@ -136,7 +138,7 @@ struct AuthFile: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case name, authIndex, provider, type, email, label, status, statusMessage
-        case disabled, unavailable, priority, success, failed, recentRequests, idToken
+        case disabled, unavailable, priority, success, failed, recentRequests, idToken, projectId
     }
 
     init(from decoder: Decoder) throws {
@@ -157,6 +159,7 @@ struct AuthFile: Decodable {
         recentRequests = try? c.decodeIfPresent([Bucket].self, forKey: .recentRequests)
         // id_token is an object for Codex auths but may be absent or a raw string elsewhere.
         idToken = try? c.decodeIfPresent(IDToken.self, forKey: .idToken)
+        projectId = try? c.decodeIfPresent(String.self, forKey: .projectId)
     }
 
     var providerID: String { (provider ?? type ?? "").lowercased() }
@@ -167,6 +170,8 @@ struct APICallRequest: Encodable {
     let method: String
     let url: String
     let header: [String: String]
+    /// The raw request body, for POSTs.
+    let data: String?
 }
 
 struct APICallResponse: Decodable {
